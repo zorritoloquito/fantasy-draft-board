@@ -22,6 +22,9 @@ header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:
 #search::placeholder{color:var(--dimmer)}
 .counter{font:11px/1.3 var(--mono);color:var(--dim);white-space:nowrap;text-align:right}
 .counter b{color:var(--fg);font-size:14px}
+.counter input{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+  border-radius:4px;font:11px var(--mono);padding:2px 3px;margin:0 1px}
+.counter label{color:var(--dimmer)}
 button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:5px;
   padding:6px 10px;font-size:11px;cursor:pointer;font-family:inherit}
 button:hover{color:var(--fg);border-color:var(--dimmer)}
@@ -78,7 +81,10 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
 
 <header>
   <input id="search" placeholder="type a name  →  Enter = drafted by someone else  ·  Shift+Enter = drafted by me" autocomplete="off" spellcheck="false">
-  <div class="counter">pick <b id="pickno">1</b> · <span id="remain">237</span> left</div>
+  <div class="counter">pick <b id="pickno">1</b> · <span id="remain">237</span> left<br>
+    <label>slot <input id="slot" type="number" min="1" max="16" value="1" style="width:38px"></label>
+    <label>of <input id="teams" type="number" min="4" max="16" value="10" style="width:38px"></label>
+    · next in <b id="gap">–</b></div>
   <button id="undo">↶ Undo <kbd>⌘Z</kbd></button>
   <button id="reset">Reset</button>
 </header>
@@ -89,7 +95,7 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
     <div id="left"></div>
   </div>
   <div class="col">
-    <h2>Wait cost <span>— what it costs to punt this position until your next pick</span></h2>
+    <h2>VONA <span>— what waiting until your next pick costs you at each position</span></h2>
     <div id="wait"></div>
     <h2 style="margin-top:14px">Position boards <span>— top 12 available</span></h2>
     <div class="grid4" id="boards"></div>
@@ -116,6 +122,9 @@ const LS = 'ozark-draft-2026';
 /* ---------- state ---------- */
 let players = DATA.players.map(p => ({...p}));
 let state = { taken:{}, order:[] };   // id -> 'x' | 'o'
+let cfg = { teams:10, slot:1 };
+try { const c = JSON.parse(localStorage.getItem(LS+':cfg')); if (c) cfg = c; } catch {}
+const saveCfg = () => { try { localStorage.setItem(LS+':cfg', JSON.stringify(cfg)); } catch {} };
 try { const s = JSON.parse(localStorage.getItem(LS)); if (s && s.taken) state = s; } catch {}
 const save = () => { try { localStorage.setItem(LS, JSON.stringify(state)); } catch {} };
 
@@ -126,29 +135,61 @@ const avail  = () => players.filter(p => !state.taken[p.id]);
 const mine   = () => players.filter(p => state.taken[p.id] === 'o');
 const byVal  = a => [...a].sort((x,y) => (y.value - x.value) || (x.ecr - y.ecr));
 
-/* ---------- the decision model ----------
-   PS = the sheet's estimate of the chance a player is gone before your next pick.
-   P(player i is the best still on the board at your next pick)
-     = P(i survives) * P(everyone better than i is gone)
-   Expected best-available value at next pick = sum over i of that, times i's value.
-   Wait cost = value of the best guy now  -  that expectation.
-   High wait cost = the position falls off a cliff, take it now.
-   Low wait cost  = you can punt a round and lose almost nothing.
------------------------------------------- */
-function waitCost(pos) {
-  const pool = byVal(avail().filter(p => p.pos === pos));
-  if (!pool.length) return null;
-  const now = pool[0];
-  let survives = 1, exp = 0, likely = pool[0], bestP = -1;
-  for (const p of pool) {
-    const gone = Math.min(Math.max((p.ps ?? 0) / 100, 0), 0.995);
-    const pBest = (1 - gone) * survives;   // he survives AND everyone above him is gone
-    exp += pBest * p.value;
-    if (pBest > bestP) { bestP = pBest; likely = p; }
-    survives *= gone;
-    if (survives < 0.001) break;
-  }
-  return { pos, now, exp, cost: Math.max(now.value - exp, 0), likely, likelyP: bestP };
+/* ---------- the decision model (ported from the sheet's own formulas) ----------
+   The xlsx showed VALUE / VOR / PTS / TIER / ECR are all static VLOOKUPs.
+   PS is the ONLY dynamic cell:
+     SUMIFS(VOR below this row, DRAFT<>"x", DRAFT<>"o", VOR>0) / total positional VOR
+   i.e. the share of this position's value still sitting BELOW him, undrafted.
+   Verified against the sheet to the rounded percent on all four positions.
+
+   VONA is the thing the sheet can't tell you: what it costs to wait a round.
+   Market order = ECR. Between your pick and your next one, N players come off
+   the board; assume the market takes the top N by ECR. Whoever is still the
+   best at each position after that is your realistic fallback.
+------------------------------------------------------------------------------ */
+const TOTVOR = {};
+for (const p of DATA.players) if (p.vor > 0) TOTVOR[p.pos] = (TOTVOR[p.pos] ?? 0) + p.vor;
+
+function livePS(pool) {                 // pool = undrafted at a position, sorted as the sheet sorts
+  const out = new Map();
+  let below = pool.reduce((a, p) => a + Math.max(p.vor ?? 0, 0), 0);
+  for (const p of pool) { below -= Math.max(p.vor ?? 0, 0); out.set(p.id, below / (TOTVOR[p.pos] || 1) * 100); }
+  return out;
+}
+
+// My overall pick numbers in a snake draft.
+function myPicks() {
+  const T = cfg.teams, s = cfg.slot, out = [];
+  for (let r = 1; r <= 18; r++) out.push((r - 1) * T + (r % 2 ? s : T - s + 1));
+  return out;
+}
+function gapToNextPick() {
+  const done = state.order.length, mine = myPicks();
+  const now  = mine.find(p => p > done);          // the pick I'm on / heading to
+  const nxt  = mine.find(p => p > (now ?? 0));
+  if (!now || !nxt) return 0;
+  return nxt - now - 1;                            // others picking in between
+}
+
+function decide() {
+  const pool = avail();
+  const ps   = new Map();
+  for (const pos of POSN) for (const [k, v] of livePS(byVal(pool.filter(p => p.pos === pos)))) ps.set(k, v);
+
+  const N = gapToNextPick();
+  // market takes the top N by ECR
+  const gone = new Set(pool.filter(p => p.ecr != null).sort((a, b) => a.ecr - b.ecr).slice(0, N).map(p => p.id));
+  const later = pool.filter(p => !gone.has(p.id));
+
+  const rows = POSN.map(pos => {
+    const nowBest   = byVal(pool.filter(p => p.pos === pos))[0];
+    const laterBest = byVal(later.filter(p => p.pos === pos))[0];
+    if (!nowBest) return null;
+    return { pos, now: nowBest, later: laterBest,
+             vona: Math.max(nowBest.value - (laterBest ? laterBest.value : 0), 0) };
+  }).filter(Boolean).sort((a, b) => b.vona - a.vona);
+
+  return { rows, ps, N };
 }
 
 /* ---------- search ---------- */
@@ -195,12 +236,14 @@ function rowHTML(p, i, selected) {
   return `<div class="${cls}" data-i="${i}">
     <div class="tag bg-${p.pos}">${p.pos}</div>
     <div><div class="nm">${p.name}${t === 'o' ? ' ⭐' : ''}</div>
-         <div class="sub">${p.team}·bye ${p.bye ?? '–'} · T${p.tier} · ECR ${p.ecr} · ${p.ps}% gone</div></div>
+         <div class="sub">${p.team}·bye ${p.bye ?? '–'} · T${p.tier} · ECR ${p.ecr} · ${(LIVEPS.get(p.id) ?? p.ps).toFixed(0)}% below</div></div>
     <div class="rt">$${p.value}<small>${p.vor} vor</small></div>
   </div>`;
 }
+let LIVEPS = new Map();
 function render() {
   recompute();
+  LIVEPS = decide().ps;
   el('left').innerHTML = results.map((p, i) => rowHTML(p, i, i === sel)).join('') || '<div class=hint>no match</div>';
   el('leftTitle').innerHTML = search.value.trim()
     ? 'Search <span>— Enter marks taken, ⇧Enter marks yours</span>'
@@ -208,16 +251,18 @@ function render() {
   el('remain').textContent = avail().length;
   el('pickno').textContent = state.order.length + 1;
 
-  const costs = POSN.map(waitCost).filter(Boolean).sort((a,b) => b.cost - a.cost);
-  const max = Math.max(...costs.map(c => c.cost), 1);
-  el('wait').innerHTML = costs.map(c => {
-    const hue = c.cost > max * .6 ? 'hot' : c.cost > max * .25 ? 'warm' : 'cool';
+  const { rows: vrows, N } = decide();
+  el('gap').textContent = N + ' picks';
+  const max = Math.max(...vrows.map(c => c.vona), 1);
+  el('wait').innerHTML = vrows.map(c => {
+    const hue = c.vona > max * .6 ? 'hot' : c.vona > max * .25 ? 'warm' : 'cool';
+    const psNow = (LIVEPS.get(c.now.id) ?? 0).toFixed(0);
     return `<div class="wc" style="border-left-color:var(--${c.pos.toLowerCase()})">
       <div class="top"><span class="pos pos-${c.pos}">${c.pos}</span>
-        <span class="cost" style="color:var(--${hue})">−$${c.cost.toFixed(1)}</span></div>
-      <div class="who">${c.now.name} <span style="color:var(--dimmer)">$${c.now.value} · ${c.now.ps}% gone</span></div>
-      <div class="bar"><i class="bg-${c.pos}" style="width:${(c.cost / max * 100).toFixed(0)}%"></i></div>
-      <div class="exp">wait → expect ~$${c.exp.toFixed(1)} · likely ${c.likely.name} (${(c.likelyP*100).toFixed(0)}%)</div>
+        <span class="cost" style="color:var(--${hue})">−$${c.vona.toFixed(0)}</span></div>
+      <div class="who">${c.now.name} <span style="color:var(--dimmer)">$${c.now.value} · ${psNow}% of ${c.pos} value left below him</span></div>
+      <div class="bar"><i class="bg-${c.pos}" style="width:${(c.vona / max * 100).toFixed(0)}%"></i></div>
+      <div class="exp">wait ${N} picks → ${c.later ? c.later.name + ' ($' + c.later.value + ')' : 'nothing left'}</div>
     </div>`;
   }).join('');
 
@@ -261,6 +306,10 @@ el('left').addEventListener('click', e => {
   const r = e.target.closest('.row'); if (!r) return;
   mark(results[+r.dataset.i], e.shiftKey ? 'o' : 'x');
 });
+el('slot').value = cfg.slot; el('teams').value = cfg.teams;
+el('slot').onchange  = e => { cfg.slot  = +e.target.value || 1;  saveCfg(); render(); };
+el('teams').onchange = e => { cfg.teams = +e.target.value || 10; saveCfg(); render(); };
+for (const id of ['slot','teams']) el(id).onkeydown = e => e.stopPropagation();
 el('undo').onclick = undo;
 el('reset').onclick = () => { if (confirm('Clear the whole draft?')) { state = {taken:{},order:[]}; save(); render(); } };
 search.focus();
