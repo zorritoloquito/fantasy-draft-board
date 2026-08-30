@@ -1,0 +1,4 @@
+node_modules/
+data/picks.json
+recon/
+.brave-profile/
