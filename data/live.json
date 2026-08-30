@@ -1,5 +1,5 @@
 {
- "ts": 1788128075421,
+ "ts": 1788128237483,
  "connected": true,
  "me": {
   "budget": 200,
@@ -7,11 +7,11 @@
   "slots": 15,
   "maxBid": 186
  },
- "spent": 954,
- "filled": 17,
- "moneyLeft": 1046,
- "valueLeft": 1520,
- "inflation": 0.6881578947368421,
+ "spent": 1147,
+ "filled": 22,
+ "moneyLeft": 853,
+ "valueLeft": 1388,
+ "inflation": 0.6145533141210374,
  "teams": [
   {
    "name": "Team 8",
@@ -27,8 +27,8 @@
   },
   {
    "name": "Team 4",
-   "budget": 91,
-   "filled": 2,
+   "budget": 54,
+   "filled": 3,
    "slots": 15
   },
   {
@@ -45,20 +45,20 @@
   },
   {
    "name": "Team 7",
-   "budget": 131,
-   "filled": 1,
+   "budget": 101,
+   "filled": 2,
    "slots": 15
   },
   {
    "name": "Team 2",
-   "budget": 64,
-   "filled": 3,
+   "budget": 22,
+   "filled": 4,
    "slots": 15
   },
   {
    "name": "Team 5",
-   "budget": 62,
-   "filled": 2,
+   "budget": 33,
+   "filled": 3,
    "slots": 15
   },
   {
@@ -69,42 +69,18 @@
   },
   {
    "name": "Team 3",
-   "budget": 200,
-   "filled": 0,
+   "budget": 145,
+   "filled": 1,
    "slots": 15
   }
  ],
- "block": {
-  "proj": 41,
-  "bid": 42,
-  "leader": "Team 2",
-  "nextOffer": 43,
-  "myMax": 186,
-  "myBudget": 200
- },
  "last": {
-  "name": "G. PICKENS",
-  "pos": "WR",
-  "team": "DAL",
-  "by": "Team 8"
- },
- "nominated": {
-  "id": "RB:Derrick Henry",
+  "name": "S. BARKLEY",
   "pos": "RB",
-  "tier": 3,
-  "name": "Derrick Henry",
-  "team": "BAL",
-  "bye": 13,
-  "pts": 197,
-  "value": 32,
-  "ps": 73,
-  "ecr": 20,
-  "draft": "",
-  "vor": 118,
-  "row": 10,
-  "col": 11,
-  "target": 22
+  "team": "PHI",
+  "by": "Team 3"
  },
+ "nominated": null,
  "soldIds": [
   "RB:Jahmyr Gibbs",
   "RB:Bijan Robinson",
@@ -115,14 +91,19 @@
   "WR:Jaxon Smith-Njigba",
   "WR:Amon-Ra St. Brown",
   "RB:De'Von Achane",
+  "RB:Derrick Henry",
   "RB:James Cook III",
   "RB:Chase Brown",
+  "RB:Saquon Barkley",
   "WR:Justin Jefferson",
   "WR:CeeDee Lamb",
   "WR:Drake London",
   "RB:Josh Jacobs",
   "WR:George Pickens",
-  "WR:Nico Collins"
+  "WR:Chris Olave",
+  "WR:Nico Collins",
+  "TE:Brock Bowers",
+  "TE:Trey McBride"
  ],
- "goneCount": 17
+ "goneCount": 22
 }

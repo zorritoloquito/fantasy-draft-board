@@ -43,6 +43,8 @@ await connect();
 console.log('watching draft room…  writing data/live.json');
 
 let lastAvail = null, soldOrder = [];
+const boughtBy = {};          // playerId -> team name that won him
+let lastSeenNom = null;
 setInterval(async () => {
   let s; try { s = await evaluate(); } catch { return; }
   if (!s || !s.avail?.length) return;
@@ -52,9 +54,23 @@ setInterval(async () => {
 
   // anyone who was on the board last tick and isn't now = sold
   if (lastAvail) for (const id of lastAvail) if (!availIds.has(id)) {
-    if (!soldOrder.includes(id)) { soldOrder.push(id); console.log('SOLD ▸', id); }
+    if (!soldOrder.includes(id)) {
+      soldOrder.push(id);
+      // the banner names who just won; match it to the player that vanished
+      const won = s.last && matchPlayer(s.last);
+      const buyer = (won && won.id === id && s.last.by) ? s.last.by : null;
+      if (buyer) boughtBy[id] = buyer;
+      console.log(`SOLD ▸ ${id.split(':')[1].padEnd(24)} ${buyer ? '→ ' + buyer : ''}${buyer === 'You' ? '   ⭐ YOURS' : ''}`);
+    }
   }
   lastAvail = availIds;
+
+  // catch our own buys even if the banner scrolled past: our roster count rising
+  // with a player missing that we never attributed is almost certainly ours.
+  if (s.last && s.last.by === 'You') {
+    const won = matchPlayer(s.last);
+    if (won && !availIds.has(won.id)) boughtBy[won.id] = 'You';
+  }
 
   const me = s.teams.find(t => t.name === 'You');
   const spent = s.teams.reduce((a, t) => a + (BUDGET - t.budget), 0);
@@ -92,6 +108,8 @@ setInterval(async () => {
     teams: s.teams, block: s.block, last: s.last,
     nominated: nominated ? { ...nominated, target: Math.round(nominated.value * inflation) } : null,
     soldIds: goneList.map(p => p.id),
+    mineIds: Object.keys(boughtBy).filter(id => boughtBy[id] === 'You'),
+    boughtBy,
     goneCount: goneList.length,
   }, null, 1));
 }, 2000);

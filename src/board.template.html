@@ -338,6 +338,10 @@ async function poll() {
     if (r.ok) {
       LIVE = await r.json();
       for (const id of LIVE.soldIds || []) if (!state.taken[id]) { state.taken[id] = 'x'; state.order.push(id); }
+      for (const id of LIVE.mineIds || []) if (state.taken[id] !== 'o') {
+        if (!state.taken[id]) state.order.push(id);
+        state.taken[id] = 'o';                       // upgrade x -> o once we know it was ours
+      }
       save();
     }
   } catch {}
