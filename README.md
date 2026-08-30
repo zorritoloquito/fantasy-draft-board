@@ -2,9 +2,12 @@
 
 Live draft board built from `DraftSheets_2026_ozark.xlsx`. 10-team, 0.5 PPR.
 
-## Run
+## Run (auction — 10 team, $200, 0.5 PPR, 15 roster spots)
 
-    ./start.sh          # builds + serves + opens the board
+    ./start-browser.sh   # 1. Brave on a separate profile, CDP port 9222
+                         #    log into Yahoo THERE, open the draft room
+    ./watch.sh           # 2. polls the draft room -> data/live.json
+    ./start.sh           # 3. serves + opens the board
 
 ## Keys
 
@@ -29,12 +32,20 @@ Ported directly from the xlsx formulas, verified to the rounded percent:
   `SUMIFS(VOR below this row, DRAFT<>"x", DRAFT<>"o", VOR>0) / total positional VOR`.
   The share of that position's value still sitting **below** this player, undrafted.
   It is a remaining-depth gauge, **not** a probability that he gets taken.
-- **VONA** — not in the sheet. Value Over Next Available: with `N` picks between
-  your turn and your next one, assume the market takes the top `N` by ECR, then
-  compare the best available at each position now vs. then. High VONA = take that
-  position now; low VONA = it will still be there.
+- **Inflation** — not in the sheet, and the whole point in an auction:
 
-Set your **slot** and league **size** in the header — VONA depends on the snake gap.
+      (league money left) / (sheet value of players left)
+
+  Below 1.0 = the room overspent early and everyone left is a bargain.
+  Above 1.0 = money is chasing too few players; expect to overpay.
+  Your **target price** for any player is `sheet value x inflation`.
+- **Max bid** — `budget - (empty roster spots - 1)`. Verified against Yahoo's own
+  "Max Offer" figure to the dollar.
+
+The sheet's own value scale is calibrated correctly ($2102 across 237 players vs
+$2000 of league money) but it is *flatter* than Yahoo's: it prices Nacua at $42
+where Yahoo says $59. The edge is letting the room overpay at the top and buying
+the middle once inflation drops.
 
 ## Files
 

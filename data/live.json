@@ -1,0 +1,128 @@
+{
+ "ts": 1788128075421,
+ "connected": true,
+ "me": {
+  "budget": 200,
+  "filled": 0,
+  "slots": 15,
+  "maxBid": 186
+ },
+ "spent": 954,
+ "filled": 17,
+ "moneyLeft": 1046,
+ "valueLeft": 1520,
+ "inflation": 0.6881578947368421,
+ "teams": [
+  {
+   "name": "Team 8",
+   "budget": 47,
+   "filled": 3,
+   "slots": 15
+  },
+  {
+   "name": "You",
+   "budget": 200,
+   "filled": 0,
+   "slots": 15
+  },
+  {
+   "name": "Team 4",
+   "budget": 91,
+   "filled": 2,
+   "slots": 15
+  },
+  {
+   "name": "Team 9",
+   "budget": 83,
+   "filled": 2,
+   "slots": 15
+  },
+  {
+   "name": "Team 1",
+   "budget": 34,
+   "filled": 3,
+   "slots": 15
+  },
+  {
+   "name": "Team 7",
+   "budget": 131,
+   "filled": 1,
+   "slots": 15
+  },
+  {
+   "name": "Team 2",
+   "budget": 64,
+   "filled": 3,
+   "slots": 15
+  },
+  {
+   "name": "Team 5",
+   "budget": 62,
+   "filled": 2,
+   "slots": 15
+  },
+  {
+   "name": "Team 10",
+   "budget": 134,
+   "filled": 1,
+   "slots": 15
+  },
+  {
+   "name": "Team 3",
+   "budget": 200,
+   "filled": 0,
+   "slots": 15
+  }
+ ],
+ "block": {
+  "proj": 41,
+  "bid": 42,
+  "leader": "Team 2",
+  "nextOffer": 43,
+  "myMax": 186,
+  "myBudget": 200
+ },
+ "last": {
+  "name": "G. PICKENS",
+  "pos": "WR",
+  "team": "DAL",
+  "by": "Team 8"
+ },
+ "nominated": {
+  "id": "RB:Derrick Henry",
+  "pos": "RB",
+  "tier": 3,
+  "name": "Derrick Henry",
+  "team": "BAL",
+  "bye": 13,
+  "pts": 197,
+  "value": 32,
+  "ps": 73,
+  "ecr": 20,
+  "draft": "",
+  "vor": 118,
+  "row": 10,
+  "col": 11,
+  "target": 22
+ },
+ "soldIds": [
+  "RB:Jahmyr Gibbs",
+  "RB:Bijan Robinson",
+  "WR:Puka Nacua",
+  "WR:Ja'Marr Chase",
+  "RB:Christian McCaffrey",
+  "RB:Jonathan Taylor",
+  "WR:Jaxon Smith-Njigba",
+  "WR:Amon-Ra St. Brown",
+  "RB:De'Von Achane",
+  "RB:James Cook III",
+  "RB:Chase Brown",
+  "WR:Justin Jefferson",
+  "WR:CeeDee Lamb",
+  "WR:Drake London",
+  "RB:Josh Jacobs",
+  "WR:George Pickens",
+  "WR:Nico Collins"
+ ],
+ "goneCount": 17
+}
