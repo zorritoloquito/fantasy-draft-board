@@ -44,6 +44,14 @@ console.log('watching draft room…  writing data/live.json');
 
 let lastAvail = null, soldOrder = [];
 const boughtBy = {};          // playerId -> team name that won him
+// seed from Yahoo's own draft-results page (data/seed.json) so a mid-draft
+// restart resumes from the authoritative pick list instead of re-deriving it.
+try {
+  const seed = JSON.parse(readFileSync(new URL('../data/seed.json', import.meta.url)));
+  soldOrder.push(...seed.soldIds);
+  Object.assign(boughtBy, seed.boughtBy);
+  console.log(`seeded ${seed.soldIds.length} picks from data/seed.json`);
+} catch {}
 let lastSeenNom = null;
 setInterval(async () => {
   let s; try { s = await evaluate(); } catch { return; }

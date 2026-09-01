@@ -3,7 +3,7 @@
   const out = { ts: Date.now() };
 
   // teams: "Team 9\t$131\t1/15"  and  "You\t$200\t0/15"
-  out.teams = [...t.matchAll(/\n\s*(You|Team \d+)\s*\n?\s*\$(\d+)\s+(\d+)\/(\d+)/g)]
+  out.teams = [...t.matchAll(/\n\s*([^\n$]{1,28}?)\s*\n?\s*\$(\d+)\s+(\d+)\/(\d+)/g)]
     .map(m => ({ name: m[1], budget: +m[2], filled: +m[3], slots: +m[4] }));
 
   // available players still on the board
