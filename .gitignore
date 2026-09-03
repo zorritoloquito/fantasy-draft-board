@@ -2,3 +2,11 @@ node_modules/
 data/picks.json
 recon/
 .brave-profile/
+
+# Live draft state — MUST NOT be committed. Shipping a finished draft's state
+# makes the board cold-start as that draft (158 players pre-sold, stale
+# nomination rendered as a live BID). Archived drafts live in data/drafts/.
+data/live.json
+data/seed.json
+data/picks-*.ndjson
+.watch.pid

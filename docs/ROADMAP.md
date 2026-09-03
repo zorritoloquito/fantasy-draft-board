@@ -7,7 +7,26 @@ The 2026 draft went well — best value-per-dollar in the league (see
 
 ---
 
-## 1. Positional scarcity and tier breaks — *highest value*
+## 1. Positional scarcity and tier breaks — ✅ DONE (Sep 3, 2026)
+
+Built as `tierScarcity()` / `tierBadge()` in `src/model.mjs`, rendered as the
+scarcity panel above the position boards and as badges on player rows. Covered
+by 12 tests in `src/test-model.mjs`.
+
+- Per-position panel: players left, value left, % of positional value gone,
+  best remaining, and the tier-1 count with the drop to tier 2.
+- `LAST T2 · −$9` badges, with the magnitude attached. A lone player in a tier
+  with a trivial drop behind him is deliberately downgraded to a quiet
+  `LAST T2` — the dollar figure is what makes the flag actionable.
+- `2 LEFT T3` for a tier about to empty.
+- Position-board tier dividers now carry a running "N left" count.
+
+Still open from the original ask: none of this yet *changes the target price*.
+The board tells you the cliff is there; deciding to pay through it is still
+manual. Folding cliff magnitude into the recommended bid belongs with item 2,
+since both are "when should the number go above book".
+
+<details><summary>Original write-up</summary>
 
 **The gap:** the board shows a per-player `PS` ("% of positional value still
 below this player, undrafted") and a static `TIER`, but there is no view that
@@ -33,6 +52,8 @@ During the draft this had to be computed ad hoc, in chat, by querying
 
 The data is already in `players.json` (`tier`, `pos`, `value`, `vor`); this is a
 presentation problem, not a modeling one.
+
+</details>
 
 ## 2. Stars-and-scrubs mode
 
@@ -75,21 +96,26 @@ readable and the strategy was already understood from the sheet.
 - Consider a "what should I do right now" summary rendered on the board itself
   for moments when there's no time to type.
 
-## 4. Board reliability affordances
+## 4. Board reliability affordances — ✅ MOSTLY DONE (Sep 3, 2026)
 
-Small, cheap, and would have prevented most of the draft-day chaos:
+- ✅ Staleness banner — full-width, red/amber, naming the cause and the fix.
+- ✅ Phantom-sale count surfaced on the board when the sold list disagrees with
+  Yahoo. The mismatch that was the tell for the Aug 30 corruption is no longer
+  CLI-only — and it now self-corrects rather than needing to be spotted.
+- ⬜ A "reseed from Yahoo results" button. Still manual.
 
-- Staleness banner when `live.json` is older than ~10s (see P0-2).
-- Show `soldIds` vs `filled` somewhere visible — the mismatch was the tell for
-  the corruption, and it was only ever visible via the CLI.
-- A "reseed from Yahoo results" button, replacing the manual scrape-and-restart
-  that had to be improvised mid-draft.
+## 5. Draft replay / test harness — ✅ PARTLY DONE (Sep 3, 2026)
 
-## 5. Draft replay / test harness
+`src/simulate.mjs` generates a full fake auction and writes `live.json` exactly
+as the watcher does, so the board can be exercised end-to-end with no Yahoo, no
+browser profile and no draft. `--filter` and `--freeze` reproduce the two P0
+failure modes on demand. `src/test-model.mjs` covers the decision logic
+directly, including a pinned copy of the pre-patch implementation so the
+regression tests can't pass vacuously.
 
-Record every tick to disk (see P1-3), then replay a recorded draft against the
-watcher. Every P0 in `KNOWN-ISSUES.md` would have been caught by replaying a
-draft where someone clicks a position filter.
+Still open: replaying a *recorded real* draft. `data/picks-<date>.ndjson` now
+captures the raw material (P1-3), so the next live draft produces a replayable
+trace for free.
 
 ## 6. Smaller items
 

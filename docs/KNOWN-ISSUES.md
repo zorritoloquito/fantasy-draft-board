@@ -3,6 +3,36 @@
 Every bug below was hit live during the 2026 Ozark auction on Aug 30. They are
 ordered by how much damage they did, not by how hard they are to fix.
 
+> **Status as of Sep 3, 2026:** P0-1, P0-2, P0-4, P1-1, P1-2, P1-3, P2-1, P2-2
+> and P3-3 are fixed and covered by `src/test-model.mjs` (31 tests). The
+> underlying root cause below is *not* fixed — the watcher still infers sales
+> from disappearance. What changed is that it now refuses to believe
+> implausible readings and says so loudly instead of writing confident nonsense.
+
+---
+
+## P0-4 — A finished draft was committed to the repo (FIXED)
+
+**Severity: critical, and it would have fired on the very next draft.**
+
+`data/live.json` and `data/seed.json` were committed holding the *completed*
+Aug 30 draft. Opening `board.html` in a clean browser with empty localStorage
+replayed that draft from scratch: 158 players pre-marked sold, best available a
+$6 Denzel Boston, a four-day-old nomination rendered as a live green **BID**,
+inflation 1.03. Nothing on screen said any of it was stale.
+
+This is the P0-2 failure class — stale data indistinguishable from live — except
+it was the *default state on first open*, before the watcher ever ran.
+
+**Fixed** three ways:
+- both files moved to `data/drafts/2026-08-30-ozark/` and added to `.gitignore`
+- `./new-draft.sh` archives and clears all watcher state between drafts
+- a **✦ New draft** button on the board clears its localStorage, and `start.sh`
+  warns if `data/live.json` is more than an hour old
+
+localStorage is now namespaced per league (`draftboard:<league>`), so switching
+leagues can't inherit the previous draft's picks either.
+
 The unifying root cause: **`src/extract.js` scrapes `document.body.innerText` of
 whatever the Yahoo draft client happens to be rendering.** The watcher has no way
 to tell "this player is gone because someone bought him" apart from "this player
@@ -30,14 +60,40 @@ Yahoo's authoritative `filled` count, which would have recovered on its own — 
 then unconditionally re-adds everything in `soldOrder` on top (see P1-1). One bad
 tick poisons every subsequent tick until the process restarts.
 
-**Repro:** start the watcher, click any position filter, wait 2s, read
-`data/live.json`.
+**Repro:** `node src/simulate.mjs --filter --fast`, or start the watcher against
+a real room and click any position filter.
 
-**Suggested fix:** don't infer sales from disappearance alone. Yahoo's draft
-results page (`/f1/<league>/draftresults`) is authoritative and carries pick,
-player, price, and buyer. Poll that instead of, or as a cross-check against, the
-disappearance diff. At minimum, detect the filter state (`pos_type=All` appears
-in the DOM) and refuse to diff when it isn't `All`.
+**FIXED** by two guards in `src/model.mjs:checkGuards()`, neither of which needs
+to understand Yahoo's markup:
+
+1. **Shape check** — if fewer than 3 positions are rendering while plenty of
+   players remain unsold, a filter is on.
+2. **Rate check** — an auction sells one player at a time. More than
+   `maxSalesPerTick` (default 3) vanishing inside a single 2s tick is a
+   re-render, not sales. This alone would have caught "98 sold in one tick".
+
+The guard returns one of three actions, and the distinction matters:
+
+- **refuse** (the shape is wrong — a filter, the wrong tab): don't diff, and
+  critically don't advance the baseline. The next healthy tick recovers by itself.
+- **resync** (the shape is fine but too much moved at once — a re-sort, a scroll,
+  or a view just restored after being filtered): adopt the new list as the
+  baseline *without* crediting any of it as sales, and let `filled`-driven
+  self-calibration work out who actually went.
+- **ok**: diff normally.
+
+`resync` exists because refusing in that case **deadlocks**. Filter the list for
+thirty seconds while four players sell, then unfilter: four vanish in one tick
+against the stale baseline, the rate guard trips, the baseline never advances,
+and it trips forever — the board freezes for the rest of the draft. Adopting the
+baseline is safe precisely because `reconcileGone` caps the sold list at Yahoo's
+own `filled` count, so a resync cannot invent a sale. It writes `stale: true` with the reason, and the board
+shows a red banner naming the fix. Verified: with `--filter`, inflation goes
+0.74 → (guard) → 0.71 with no corruption. The pre-patch code reached 6.70.
+
+The root cause is untouched: sales are still inferred from disappearance.
+Polling `/f1/<league>/draftresults` as the authoritative source remains the
+right long-term fix (ROADMAP).
 
 ---
 
@@ -51,10 +107,15 @@ The board keeps polling and keeps rendering the last file it got, so **stale dat
 is visually indistinguishable from live data.** We lost ~4 minutes mid-auction to
 this before noticing, and again later when the watcher wasn't running at all.
 
-**Suggested fix:** two parts. (1) On an empty parse, still write `live.json` with
-`stale: true` and a reason, rather than writing nothing. (2) Have the board show
-a loud banner when `Date.now() - ts` exceeds ~10s. The `ts` field already exists
-and is currently unused by the UI.
+**FIXED**, both parts. (1) `watch.mjs` now writes `live.json` on *every* tick,
+including empty parses and CDP errors, marked `stale: true` with a reason.
+(2) The board renders a full-width banner whenever it is not confidently live —
+watcher missing, watcher self-flagged, or `ts` older than `staleAfterMs`
+(default 10s) — naming the likely cause and the fix. The board also refuses to
+copy picks out of a tick flagged `stale`, so one bad read can no longer become
+permanent localStorage state.
+
+**Repro:** `node src/simulate.mjs --freeze --fast` and watch the board.
 
 ---
 
@@ -91,9 +152,15 @@ Anything ever observed vanishing is re-added permanently, with no check against
 state. Note the mismatch was visible in the data the whole time: `soldIds: 128`
 against `filled: 30`.
 
-**Suggested fix:** treat `filled` as ground truth. If `soldOrder.length` exceeds
-it, the extra entries are provably phantom — drop them, or reconcile against the
-draft-results page.
+**FIXED** in `src/model.mjs:reconcileGone()`. Yahoo's `filled` is now a hard
+ceiling, not just a calibration target. When the observed list exceeds it the
+extras are provably phantom and get dropped, keeping the sales we have a named
+buyer for over the unattributed ones. The count is surfaced as `phantoms` in
+`live.json` and shown on the board.
+
+Regression test: the real incident (soldOrder 128 / filled 30) now reconciles to
+30. `src/test-model.mjs` keeps a copy of the pre-patch implementation and asserts
+that it *does* blow up, so the test can never pass vacuously.
 
 ---
 
@@ -105,8 +172,9 @@ one and the symptom looks like "the fix didn't work." We hit this after patching
 `extract.js` — the old pre-patch process was still running and kept stomping the
 corrected output with 1-team data.
 
-**Suggested fix:** pidfile or a port lock on startup; refuse to start (or offer
-to kill the incumbent) if another instance is live.
+**FIXED.** `watch.mjs` writes `.watch.pid` on startup and refuses to start if
+that pid is still alive, printing the `kill` command. A pidfile left behind by a
+dead process is cleared automatically.
 
 ---
 
@@ -117,8 +185,14 @@ a scratch file. Once the browser closed, the post-draft analysis could not be
 regenerated. The overspend-by-team numbers in `DEBRIEF-2026.md` survive only
 because they were computed during the session.
 
-**Suggested fix:** append every detected sale to `data/picks-<date>.ndjson` as it
-happens. Cheap, and it makes the whole draft replayable for testing.
+**FIXED.** Every detected sale is appended to `data/picks-<date>.ndjson` as it
+happens, with timestamp, player, buyer and price. `extract.js` now also pulls the
+sale price off the "Last:" banner, and `live.json` carries a `priceOf` map.
+
+⚠ The price scrape is **unverified against a live Yahoo room** — the banner's
+exact text was never captured. It is written defensively (wrapped in try/catch,
+`null` when it fails) so it cannot break anything, but do not assume prices will
+be there until you've seen one draft's worth. Buyer attribution is unaffected.
 
 ---
 
@@ -129,8 +203,9 @@ seeded from the results page (or the banner scrolls past), buys are attributed t
 the real team name — `PRotect Ya Neck` — so `mineIds` stayed `[]` all draft and
 "which players are mine" had to be recovered from `boughtBy` by hand.
 
-**Suggested fix:** resolve the user's real team name once at startup and match on
-both it and `'You'`.
+**FIXED.** `config.json` carries `myTeamName`, and the watcher matches on both
+that and `'You'` everywhere it attributes a buy or looks up your own budget.
+Verified in simulation: the roster panel populates correctly.
 
 ---
 
@@ -140,8 +215,8 @@ both it and `'You'`.
 two draft-room tabs open (easy to do by re-entering the room), it can attach to a
 dead one and stall.
 
-**Suggested fix:** prefer the most recently active tab, or verify the chosen tab
-actually parses before committing to it.
+**FIXED.** The watcher now probes every `draftclient` tab and commits to the
+first one that actually parses a player list, logging the ones that don't.
 
 ---
 
@@ -156,7 +231,13 @@ as two separate managers. Cosmetic for pricing, wrong for per-team analysis.
 matched or valued. Harmless during the draft (nobody paid more than $2) but it
 silently understates every team's spending in post-draft analysis.
 
-## P3-3 — Errors are swallowed
+## P3-3 — Errors are swallowed (FIXED)
 
-`try { s = await evaluate(); } catch { return; }` hides every failure — CDP drop,
-page navigation, parse error — behind an identical silent no-op. Log the reason.
+`try { s = await evaluate(); } catch { return; }` hid every failure — CDP drop,
+page navigation, parse error — behind an identical silent no-op.
+
+**Fixed.** Every failure is logged once (de-duplicated so a persistent fault
+doesn't spam the terminal) and written into `live.json` as a `stale` reason, so
+the board surfaces it too. `Runtime.evaluate` now also rejects on page
+exceptions and after a 5s timeout instead of hanging forever. Startup failures
+print a plain-English cause and remedy rather than a stack trace.

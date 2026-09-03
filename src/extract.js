@@ -22,5 +22,35 @@
   if (nomName) out.nominated = { name: nomName[1].trim(), pos: nomName[2], team: nomName[3].toUpperCase() };
   const nomLeft = t.match(/(\d+) nominations? until your turn/);
   if (nomLeft) out.nomsUntilMe = +nomLeft[1];
+
+  // --- everything below is ADDITIVE and best-effort. It must never throw and
+  // must never change the fields above; the watcher works without any of it. ---
+
+  // Sale price off the "Last:" banner (KNOWN-ISSUES P1-3 — no price was ever
+  // recorded, so the 2026 draft can't be replayed). The banner's exact shape
+  // isn't pinned down, so take the first $N in the ~120 chars after "Last:".
+  try {
+    const i = t.indexOf('Last:');
+    if (i >= 0 && out.last) {
+      const m = t.slice(i, i + 120).match(/\$(\d+)/);
+      if (m) out.last.price = +m[1];
+    }
+  } catch (e) {}
+
+  // Best-effort read of the position filter. The watcher does NOT depend on
+  // this — it independently refuses to diff when the list holds fewer than 3
+  // positions or when too many players vanish at once. This is a nicer error
+  // message when it happens to work.
+  try {
+    const sel = document.querySelector('select[name*="pos" i], select[id*="pos" i]');
+    if (sel) out.posFilter = sel.value;
+    else {
+      const on = [...document.querySelectorAll('[class*="selected" i],[class*="active" i],[aria-pressed="true"]')]
+        .map(e => (e.textContent || '').trim())
+        .find(s => /^(QB|RB|WR|TE|K|DEF|W\/R\/T|All)$/.test(s));
+      if (on) out.posFilter = on;
+    }
+  } catch (e) {}
+
   return out;
 })()

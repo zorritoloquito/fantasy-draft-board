@@ -8,10 +8,29 @@ Built for and used in the 2026 Ozark league (10-team, $200 auction, 0.5 PPR, 15
 roster spots). It finished with the best value-per-dollar in the league —
 see [`docs/DEBRIEF-2026.md`](docs/DEBRIEF-2026.md).
 
-> **Status: working prototype, survived one live draft.** It also broke three
-> times during that draft, twice silently. Read
-> [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) before trusting it, and
-> [`docs/ROADMAP.md`](docs/ROADMAP.md) for where it should go next.
+> **Status: working prototype, survived one live draft.** It broke three times
+> during that draft, twice silently. Those failures are now fixed and covered by
+> tests — see [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) for what changed and
+> what is still fragile, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's next.
+
+## Before every draft
+
+Three things, in this order. Skipping the first is how you end up drafting
+against last month's data.
+
+```bash
+./new-draft.sh                    # archive + clear the previous draft's state
+$EDITOR config.json               # teams, budget, roster spots, your team name
+node src/simulate.mjs --fast      # dry run: watch the board move, no Yahoo needed
+```
+
+On Windows, see [`docs/SETUP-WINDOWS.md`](docs/SETUP-WINDOWS.md) — a from-scratch
+guide for someone with no developer tools installed.
+
+`config.json` is the one file that must be right. `teams × budget` is the
+numerator of every price on the board, so a wrong value there corrupts
+everything quietly. The board prints it back in the header — check it against
+the draft room before the first nomination.
 
 ## The idea
 
@@ -77,6 +96,21 @@ advice and cannot place a bid.
 > $92 target on a player who sold for $40. Sorting is safe. Filtering is not.
 > This is the top item in KNOWN-ISSUES.
 
+## Reading the board
+
+Beyond the price columns, two things drive auction decisions:
+
+- **Positional scarcity** (centre panel) — for each position: how many players
+  are left, how much sheet value is left, what share of that position's value
+  is already gone, the best available, and how far the drop is to the next
+  tier. The bar is value remaining, and it turns amber past 50% and red past
+  75%.
+- **Tier badges** on player rows — `LAST T2 · −$9` means he is the final player
+  at his position in tier 2 and the next tier's best is $9 cheaper. The dollar
+  figure is the point: last-in-tier with $1 behind it is noise, last-in-tier
+  with $9 behind it is a reason to break your target price. A softer
+  `2 LEFT T3` marks a tier about to empty.
+
 ## Board keys
 
 | key | does |
@@ -87,6 +121,24 @@ advice and cannot place a bid.
 | `↑` `↓` | move selection |
 | `⌘Z` | undo last pick |
 | `Esc` | clear search |
+
+Plus **✦ New draft** (top right), which wipes the browser's memory of the
+current draft. The board also shows a full-width banner whenever it is not
+confidently live — see below.
+
+### The staleness banner
+
+If anything is wrong, it is across the top of the screen in red or amber:
+
+| banner | meaning |
+|---|---|
+| WATCHER NOT RUNNING | no `live.json` at all — prices are raw sheet values, no inflation |
+| STALE — no update for Ns | the watcher stopped writing; prices are frozen |
+| WILL NOT TRUST IT | the watcher can see the page but a guard tripped (usually a position filter) |
+| N phantom sales dropped | the sold list disagreed with Yahoo and self-corrected |
+
+Silence means live. This is the fix for the failure that cost four minutes
+mid-auction on Aug 30, when a frozen board looked exactly like a working one.
 
 Marking is a **fallback** — the watcher detects picks automatically. State
 persists in localStorage, so a refresh won't lose anything.
@@ -106,6 +158,26 @@ Ported from the xlsx formulas, verified to the rounded percent.
   Offer" to the dollar. It's a roster-filling ceiling, not a value judgment —
   bid to *target*, not to max.
 
+## What the market actually pays
+
+`docs/MARKET-2026-OZARK.md` measures the 2026 draft against the sheet, from
+Yahoo's own results page. The headline:
+
+| tier | paid ÷ sheet value |
+|---|---|
+| 1 | **1.59×** |
+| 2 | 1.31× |
+| 3 | 1.13× |
+| 4 | 0.75× |
+| 5+ | **0.48×** |
+
+Sheet value is not what a player costs — it's what he costs *relative to his
+tier*. A board pricing Gibbs at $48 × inflation will never win Gibbs; he cleared
+at $73. This is the quantified version of "the entire top tier went unbid", and
+it's the input stars-and-scrubs pricing has to clear (ROADMAP 2).
+
+Regenerate with `node src/analyze-picks.mjs`.
+
 ## Recovery
 
 If the board freezes or shows absurd numbers mid-draft:
@@ -124,14 +196,25 @@ is currently a manual process; automating it is ROADMAP item 4.
 ## Layout
 
 ```
+config.json                league settings — CHECK THIS BEFORE EVERY DRAFT
+new-draft.sh               archive + clear state between drafts
 data/draftsheet.csv        export of the DraftSheet tab (the source of truth)
 data/DraftSheets_2026_ozark.xlsx   original workbook
 data/players.json          parsed sheet, built by src/parse.mjs
 data/live.json             written by the watcher every 2s; read by the board
 data/seed.json             recovery state from Yahoo's results page
 src/parse.mjs              CSV → players.json (handles the 4-block layout)
-src/board.template.html    the app; src/build.mjs inlines data into board.html
+src/model.mjs              shared decision logic: guards, reconciliation,
+                           inflation, positional scarcity. Pure, no I/O.
+                           Inlined into the board AND imported by the watcher,
+                           so the two can never drift apart.
+src/board.template.html    the app; src/build.mjs inlines data + config + model
 src/watch.mjs              CDP poller, matching, inflation model
+src/simulate.mjs           fake draft → live.json; the pre-flight check
+src/test-model.mjs         31 regression tests, one per real draft-day failure
+src/serve.mjs              dependency-free static server for the board
+src/analyze-picks.mjs      recorded draft → market vs sheet, by tier
+data/drafts/               archived drafts: state + picks.csv with prices
 src/extract.js             the in-page scraper (injected via Runtime.evaluate)
 src/recon.mjs              dumps the draft room's ws/xhr traffic to recon/
 src/test-match.mjs         name-matching round-trip test
@@ -140,18 +223,27 @@ docs/                      debrief, known issues, roadmap
 
 ## Where to start if you're picking this up
 
-The highest-leverage work, in order:
+Run the tests first — they double as a description of every way this has
+actually failed:
 
-1. **Stop inferring sales from disappearance** (KNOWN-ISSUES P0-1/P0-2). Yahoo's
-   draft-results page is authoritative and already parseable — `watch.mjs` reads
-   it during reseeding. Making it the primary source, or a continuous
-   cross-check, eliminates most of the failure modes at once.
-2. **Tier-break / positional-scarcity display** (ROADMAP 1). The data is already
-   in `players.json`; it's a presentation problem, and it's what the drafter most
-   wanted and didn't have.
-3. **Stars-and-scrubs mode** (ROADMAP 2). The tool can currently only play one
-   strategy, and it plays it well — but that means the top tier is always ceded.
+```bash
+node src/test-model.mjs     # 31 tests, one per real draft-day failure
+node src/test-match.mjs     # name matching, 237/237
+node src/simulate.mjs --fast   # end-to-end, no Yahoo required
+```
 
-`src/test-match.mjs` covers name matching. There is no test coverage of the
-watcher's state machine, which is where every real bug has been; a replay harness
-(ROADMAP 5) would be the right first investment.
+The highest-leverage work remaining, in order:
+
+1. **Stop inferring sales from disappearance** (the root cause under P0-1/P0-2).
+   The guards make it safe, not correct — the watcher still can't tell "sold"
+   from "not rendered", it just refuses to guess. Yahoo's draft-results page is
+   authoritative and already parseable. Making it the primary source, or a
+   continuous cross-check, removes the whole class.
+2. **Stars-and-scrubs mode** (ROADMAP 2). Still the biggest strategic gap: the
+   tool can only play flat value, so the top tier is always ceded.
+3. **Verify the price scrape.** `extract.js` now reads a sale price off the
+   "Last:" banner, but that regex has never seen a live Yahoo room. Confirm it
+   against one draft before trusting `priceOf`.
+
+Positional scarcity (ROADMAP 1) is **done** — `tierScarcity()` in
+`src/model.mjs`, rendered as the scarcity panel and the tier badges.

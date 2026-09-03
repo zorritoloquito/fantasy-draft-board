@@ -1,0 +1,17 @@
+{
+  "_comment": "Edit this before every draft. Wrong values here silently corrupt every price on the board — teams x budget is the denominator of the inflation model. The board header shows these back to you; check them against the Yahoo draft room before the first nomination.",
+
+  "league": "2026 Draft (Sep 3)",
+  "teams": 10,
+  "budget": 200,
+  "rosterSlots": 15,
+
+  "_myTeamName": "Your team's EXACT name in Yahoo, so your own buys are attributed to you (KNOWN-ISSUES P2-1). Yahoo shows you as 'You' in the live banner but uses the real name on the results page, so we match both.",
+  "myTeamName": "cucamongakrakakillas",
+
+  "_staleAfterMs": "Board shows a loud STALE banner if live.json is older than this.",
+  "staleAfterMs": 10000,
+
+  "_maxSalesPerTick": "A live auction sells one player at a time. If more than this many players vanish from the list in a single 2s tick, it is a rendering change (position filter, tab switch), not sales. The watcher refuses to diff and flags itself stale. This is the guard against KNOWN-ISSUES P0-1.",
+  "maxSalesPerTick": 3
+}
