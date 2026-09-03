@@ -172,7 +172,11 @@ and for every player three numbers rather than one:
 
 | WORTH | LIKELY COST | YOUR MAX |
 |---|---|---|
-| book × inflation — the old board | × `marketBias`, the measured gap | what the plan affords |
+| book × inflation — the old board | × the measured market bias for this phase | what the plan affords |
+
+Above them, **your share of the money left** — e.g. `12.5% of the $96 left ·
+1.13× an even split of 9`. Above 1.0× means you can outbid the room on anything
+you actually want; below means you're being squeezed.
 
 Plus a viability check that does the arithmetic you'd otherwise do in your head:
 
@@ -189,19 +193,33 @@ Yahoo's own results page. The headline:
 
 | tier | vs sheet value | vs the board's own target |
 |---|---|---|
-| 1 | 1.59× | **1.85×** |
-| 2 | 1.31× | **1.87×** |
+| 1 | 1.59× | 1.85× |
+| 2 | 1.31× | 1.87× |
 | 3 | 1.13× | 1.85× |
 | 4 | 0.75× | 1.84× |
 | 5+ | 0.48× | 1.57× |
 
 The left column looks like a tier effect. It isn't — it's *timing*. Tier 1 sells
 when inflation is 0.95 and tier 5 when it's 0.19, and inflation already accounts
-for that. Once you divide by the board's own recommendation, **every tier comes
-out at the same ~1.85×**.
+for that. Divide by the board's own recommendation and every tier lands on the
+same ~1.85×: **the flat-value model isn't bad at stars specifically, it's low
+everywhere.**
 
-So the flat-value model isn't specifically bad at pricing stars. It is uniformly
-low, everywhere, by a factor of nearly two. That is what `marketBias` corrects.
+But it isn't low by a *constant* either. Bucketed by when the pick happened:
+
+| picks | bias | | picks | bias |
+|---|---|---|---|---|
+| 1–10 | **1.56×** | | 31–45 | 2.01× |
+| 11–20 | 1.92× | | 46–60 | 1.90× |
+| 21–30 | **2.11×** | | 61–110 | ~1.70× |
+
+The room was most irrational in the **middle**, not at the top. Stars go in the
+first ten picks at 1.56×; the genuinely overpriced zone is picks 20–45. The
+board interpolates this curve (`marketBiasAt()`), keyed on inflation as the
+phase proxy. Backtested, it prices Gibbs at $75 against an actual $73.
+
+**One draft, 98 players.** Treat it as the shape of one room's behaviour, not a
+calibrated coefficient. `strategy.marketBias` overrides it with a constant.
 
 Regenerate with `node src/analyze-picks.mjs`.
 
@@ -238,7 +256,7 @@ src/model.mjs              shared decision logic: guards, reconciliation,
 src/board.template.html    the app; src/build.mjs inlines data + config + model
 src/watch.mjs              CDP poller, matching, inflation model
 src/simulate.mjs           fake draft → live.json; the pre-flight check
-src/test-model.mjs         31 regression tests, one per real draft-day failure
+src/test-model.mjs         72 regression tests, one per real draft-day failure
 src/serve.mjs              dependency-free static server for the board
 src/analyze-picks.mjs      recorded draft → market vs sheet, by tier
 data/drafts/               archived drafts: state + picks.csv with prices
@@ -254,7 +272,7 @@ Run the tests first — they double as a description of every way this has
 actually failed:
 
 ```bash
-node src/test-model.mjs     # 31 tests, one per real draft-day failure
+node src/test-model.mjs     # 72 tests, one per real draft-day failure
 node src/test-match.mjs     # name matching, 237/237
 node src/simulate.mjs --fast   # end-to-end, no Yahoo required
 ```

@@ -117,7 +117,11 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
 .viab{grid-column:1/-1;font:11px/1.5 var(--mono);border-radius:5px;padding:6px 9px}
 .viab.ok{background:#3fb95015;color:var(--cool);border:1px solid #3fb95040}
 .viab.bad{background:#d2992218;color:#ffd98a;border:1px solid #d2992255}
+.viab.tight{background:#1f6feb1a;color:#9ecbff;border:1px solid #1f6feb55}
 .viab b{color:#fff}
+.share{font:12px/1.5 var(--mono);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:6px 9px;margin-bottom:8px}
+.share b{font-size:15px}
 
 /* ---- tier-break badges ---- */
 .badge{display:inline-block;font:700 8.5px/1.5 var(--mono);border-radius:3px;
@@ -150,6 +154,7 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
   </div>
   <div class="col">
     <h2>Budget plan <span id="planhdr"></span></h2>
+    <div class="share" id="share"></div>
     <div class="plan" id="plan"></div>
     <h2 style="margin-top:14px">On the block <span id="bankroll"></span></h2>
     <div id="block"></div>
@@ -370,11 +375,13 @@ function render() {
       <div class="big" style="color:var(--cool)">$${PLAN.scrubPot}</div>
       <div class="sub">${PLAN.scrubSlotsLeft} slots · <b style="color:var(--fg)">$${PLAN.perScrub.toFixed(1)}</b>/slot</div>
     </div>`
-    + (PLAN.planActive && VIAB.typical ? `<div class="viab ${VIAB.ok ? 'ok' : 'bad'}">
+    + (PLAN.planActive && VIAB.typical ? `<div class="viab ${VIAB.ok ? 'ok' : VIAB.tight ? 'tight' : 'bad'}">
         ${VIAB.ok
           ? `✓ plan holds — stars are going for about <b>$${VIAB.typical}</b>, and $${PLAN.starPot} covers the ${VIAB.need} you still want.`
-          : `⚠ stars are going for about <b>$${VIAB.typical}</b>. $${PLAN.starPot} buys <b>${VIAB.afford}</b>, not ${VIAB.need} —
-             raise starBudget by ~$${VIAB.shortfall} or drop starSlots to ${VIAB.afford}.`}
+          : VIAB.tight
+            ? `≈ tight — stars are going for about <b>$${VIAB.typical}</b>, so $${PLAN.starPot} is about <b>$${VIAB.shortfall}</b> short of ${VIAB.need}. One bargain closes it.`
+            : `⚠ stars are going for about <b>$${VIAB.typical}</b>. $${PLAN.starPot} buys <b>${VIAB.afford}</b>, not ${VIAB.need} —
+               raise starBudget by ~$${VIAB.shortfall} or drop starSlots to ${VIAB.afford}.`}
       </div>` : '');
 
   el('gap').textContent = L && !L.stale ? `infl ${infl.toFixed(2)}` : (L ? 'STALE' : 'offline');
@@ -383,6 +390,22 @@ function render() {
   el('bankroll').innerHTML = L?.me
     ? `$${L.me.budget} · ${L.me.filled}/${L.me.slots} · max bid <b>$${L.me.maxBid}</b>`
     : '<span style="color:var(--dimmer)">watcher not running</span>';
+
+  // --- SHARE OF THE MONEY LEFT ---
+  // The number that says whether you have leverage. With N teams still buying,
+  // an even split is 1/N; holding more than that means you can outbid the room
+  // on anything you want, and holding less means you're getting squeezed.
+  const liveTeams  = (L?.teams ?? []).filter(t => t.filled < t.slots);
+  const activeN    = Math.max(liveTeams.length, 1);
+  const poolLeft   = L?.moneyLeft ?? (CFG.teams * CFG.budget);
+  const myMoney    = L?.me?.budget ?? roster.budget;
+  const MS         = moneyShare({ myBudget: myMoney, moneyLeft: poolLeft, activeTeams: activeN });
+  const share = MS.share, rel = MS.relative;
+  const shareCol   = rel >= 1.25 ? 'cool' : rel <= 0.75 ? 'hot' : 'warm';
+  el('share').innerHTML = L
+    ? `<b style="color:var(--${shareCol})">${(share * 100).toFixed(1)}%</b>
+       <span style="color:var(--dimmer)">of the $${poolLeft} left · ${rel.toFixed(2)}× an even split of ${activeN}</span>`
+    : '<span style="color:var(--dimmer)">—</span>';
 
   // --- ON THE BLOCK ---
   // Three numbers, always visible. The old board showed only the first, which
@@ -491,6 +514,9 @@ function render() {
 ------------------------------------------------------------------------------ */
 const STALE_MS = CFG.staleAfterMs ?? 10000;
 function liveStatus() {
+  if (ORPHANED)       return { level: 'bad',
+                               msg: `${ORPHANED} saved picks on this board are from an EARLIER session — they may not belong to this draft.`,
+                               fix: 'If you are starting fresh, click ✦ New draft (top right). If you marked these by hand in this draft, ignore this.' };
   if (!LIVE)          return { level: 'warn', msg: 'WATCHER NOT RUNNING — every number below is straight off the sheet, with no inflation applied.',
                                fix: 'Start it with  ./watch.sh   · you can still mark picks by hand (Enter / ⇧Enter).' };
   const age = Date.now() - (LIVE.ts ?? 0);
@@ -532,14 +558,47 @@ el('reset').onclick = () => { if (confirm('Clear the whole draft?')) { state = {
 el('newdraft').onclick = () => {
   if (!confirm('Start a NEW draft?\n\nWipes every pick this browser remembers.\n\nAlso run  ./new-draft.sh  in the terminal so the watcher forgets the last draft too.')) return;
   try { for (const k of Object.keys(localStorage)) if (k.startsWith('draftboard:') || k.startsWith('ozark-draft-')) localStorage.removeItem(k); } catch {}
+  SESSION_ID = null; ORPHANED = 0;
   location.reload();
 };
 let LIVE = null;
+// Which draft the saved picks belong to. null means "we've never seen a
+// session", which is the case for a hand-driven draft with no watcher.
+let SESSION_ID = null, ORPHANED = 0;
+try { SESSION_ID = localStorage.getItem(LS + ':session'); } catch {}
 async function poll() {
   try {
     const r = await fetch('data/live.json?' + Date.now());
     if (r.ok) {
       LIVE = await r.json();
+
+      // A new draft session means these saved picks belong to a DIFFERENT
+      // draft. Wipe rather than merge: on Sep 3 a simulator run left seven
+      // players marked "mine" on a board watching an unrelated mock, and
+      // nothing on screen suggested anything was wrong (KNOWN-ISSUES P0-6).
+      const sid = LIVE.session?.id ?? null;
+      const act = sessionAction({ savedSession: SESSION_ID, incomingSession: sid,
+                                  savedPickCount: state.order.length });
+      if (sid && sid !== SESSION_ID) {
+        if (act === 'wipe') {
+          // We know which draft these picks came from, and it isn't this one.
+          // Wipe: merging two drafts is never what anyone wants.
+          state = { taken: {}, order: [] };
+          ORPHANED = 0;
+          toast(LIVE.session.source === 'simulator'
+            ? 'simulator started — cleared the previous draft'
+            : 'new draft detected — cleared the previous one');
+        } else if (act === 'warn') {
+          // Saved picks of unknown provenance: could be a hand-marked draft
+          // you're mid-way through, or leftovers from something else. We can't
+          // tell, so don't destroy them — but make it impossible to miss.
+          ORPHANED = state.order.length;
+        }
+        SESSION_ID = sid;
+        try { localStorage.setItem(LS + ':session', sid); } catch {}
+        save();
+      }
+
       // A tick the watcher flagged is a tick we don't copy picks out of — that
       // is how one bad read used to become permanent localStorage state.
       if (!LIVE.stale) {

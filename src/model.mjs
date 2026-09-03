@@ -237,19 +237,65 @@ export function planViability({ plan, starPrices = [] }) {
     ? Math.round(starPrices.slice(0, need).reduce((a, p) => a + p, 0) / Math.min(need, starPrices.length))
     : 0;
 
-  // How many can the pot actually cover, buying cheapest-first among the ones
-  // we'd realistically target?
+  // How many of the players you'd actually TARGET can the pot cover? Walk them
+  // best-first, taking each if it still fits and skipping the ones that don't.
+  // Cheapest-first would flatter the plan: it answers "can I buy two stars"
+  // with the two cheapest star-tier players, which is not the plan you wrote.
   let afford = 0, budget = plan.starPot;
-  for (const price of [...starPrices].sort((a, b) => a - b)) {
+  for (const price of starPrices) {
     if (afford >= need) break;
-    if (budget >= price) { budget -= price; afford++; } else break;
+    if (budget >= price) { budget -= price; afford++; }
   }
-  const wanted = starPrices.slice(0, need).reduce((a, p) => a + p, 0);
-  return {
-    need, afford, typical,
-    shortfall: Math.max(Math.round(wanted - plan.starPot), 0),
-    ok: afford >= need,
-  };
+  const wanted    = starPrices.slice(0, need).reduce((a, p) => a + p, 0);
+  // If the plan is executable, there is no shortfall to report — you may not
+  // land the two most expensive names, but you can fill the star slots.
+  const shortfall = afford >= need ? 0 : Math.max(Math.round(wanted - plan.starPot), 0);
+  // Being $1 short of an estimate is not the same as being $60 short, and it
+  // shouldn't flip the verdict off a cliff — these are estimates, and one
+  // player going slightly cheap closes a small gap.
+  const tight = afford < need && shortfall > 0 && shortfall <= Math.max(plan.starPot * 0.12, 8);
+  return { need, afford, typical, shortfall, tight, ok: afford >= need };
+}
+
+/* Measured from the 2026 Ozark draft: price ÷ (book × inflation), bucketed by
+   how far through the draft the pick landed, keyed by the inflation reading at
+   the time. The room did NOT pay a constant premium — it was most irrational in
+   the middle, not at the top:
+
+       inflation 0.91  →  1.56x    (picks 1-10, where the stars go)
+       inflation 0.82  →  1.92x
+       inflation 0.68  →  2.11x    (peak overpaying)
+       inflation 0.55  →  2.01x
+       inflation 0.45  →  1.90x
+       inflation 0.35  →  1.72x
+       inflation 0.25  →  1.68x
+
+   An earlier version used the single aggregate figure of 1.84x everywhere. That
+   is right on average and wrong exactly where it matters most: it priced Gibbs
+   at $85 when he went for $73, and consequently claimed a $135 star budget
+   could only buy one star instead of two.
+
+   ONE DRAFT, 98 PLAYERS. Treat this as the shape of the room's behaviour, not
+   as a calibrated coefficient. Set `strategy.marketBias` to a number in
+   config.json to override the whole curve with a constant. */
+const BIAS_CURVE = [[0.91, 1.56], [0.82, 1.92], [0.68, 2.11], [0.55, 2.01],
+                    [0.45, 1.90], [0.35, 1.72], [0.25, 1.68]];
+
+/** How much more than the board's own target the room is likely to pay, at this
+ *  point in the draft. Linear interpolation between measured points, flat
+ *  outside the observed range. */
+export function marketBiasAt(inflation, override = null) {
+  if (typeof override === 'number') return override;
+  const pts = BIAS_CURVE;                      // sorted by descending inflation
+  if (inflation >= pts[0][0]) return pts[0][1];
+  const last = pts[pts.length - 1];
+  if (inflation <= last[0]) return last[1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    if (inflation <= x0 && inflation >= x1)
+      return y0 + (y1 - y0) * ((x0 - inflation) / (x0 - x1));
+  }
+  return last[1];
 }
 
 /** What this player is likely to actually COST, versus what the sheet says he
@@ -258,7 +304,7 @@ export function planViability({ plan, starPrices = [] }) {
 export function priceView(player, opts = {}) {
   const { inflation = 1, strategy = {}, plan = null } = opts;
   const book = player?.value ?? 0;
-  const bias = strategy.marketBias ?? 1;
+  const bias = marketBiasAt(inflation, strategy.marketBias ?? null);
 
   const valueTarget = Math.max(Math.round(book * inflation), 1);   // the old board
   const marketEst   = Math.max(Math.round(book * inflation * bias), 1);
@@ -302,4 +348,35 @@ export function afterSpending(price, { budget, filled, slots }) {
     perSlot: remaining > 0 ? left / remaining : 0,
     affordable: slotsLeft > 0 && left >= remaining,   // still $1 for every slot
   };
+}
+
+/** What to do with saved picks when a draft session identifies itself.
+ *
+ *  Every watcher/simulator run stamps live.json with a session id; the board
+ *  remembers which session its localStorage belongs to. Without this, state
+ *  accumulates silently across drafts: on Sep 3 a simulator run left seven
+ *  players marked "mine" on a board watching an unrelated mock, and nothing on
+ *  screen suggested anything was wrong (KNOWN-ISSUES P0-6).
+ *
+ *    adopt — nothing saved, or same session. Carry on.
+ *    wipe  — we know which draft these picks came from and it isn't this one.
+ *            Merging two drafts is never what anyone wants.
+ *    warn  — picks of unknown provenance. Could be a hand-marked draft in
+ *            progress, could be leftovers. Don't destroy them; say so loudly.
+ */
+export function sessionAction({ savedSession, incomingSession, savedPickCount = 0 }) {
+  if (!incomingSession) return 'adopt';                  // offline / hand-driven
+  if (savedSession === incomingSession) return 'adopt';
+  if (savedSession) return 'wipe';
+  return savedPickCount > 0 ? 'warn' : 'adopt';
+}
+
+/** Your share of the money still in the room, and how that compares to an even
+ *  split among the teams still buying. Above 1.0x means you can outbid the room
+ *  on anything you actually want; below means you're being squeezed. */
+export function moneyShare({ myBudget, moneyLeft, activeTeams }) {
+  const n = Math.max(activeTeams, 1);
+  const share = moneyLeft > 0 ? myBudget / moneyLeft : 0;
+  const even  = 1 / n;
+  return { share, evenShare: even, relative: even > 0 ? share / even : 0, activeTeams: n };
 }

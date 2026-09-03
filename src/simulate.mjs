@@ -20,6 +20,11 @@ const arg  = f => process.argv.includes(f);
 const FAST = arg('--fast'), FREEZE = arg('--freeze'), FILTER = arg('--filter');
 const STEP = FAST ? 120 : 1200;
 
+// Marked `source: 'simulator'` so a board that was watching a real draft wipes
+// its state rather than quietly folding fake picks into your roster.
+const SESSION = { id: `sim-${Date.now().toString(36)}`, startedAt: Date.now(),
+                  league: CFG.league + ' (SIMULATED)', source: 'simulator' };
+
 const NAMES = ['You', '4th and Drunk', 'BANG BUS', '⚡️El Borracho ⚡️', 'Fighting Artichokes',
                'TEA👊🏽BAGGERS', 'Kupp My Balz', 'The Jesus', 'Thunder Punch', 'Nah...Nah...Nah!']
   .slice(0, CFG.teams);
@@ -72,7 +77,8 @@ const timer = setInterval(() => {
                                 totalPlayers: P.length, maxSalesPerTick: CFG.maxSalesPerTick });
     console.log(`  ⚠ filter tick → ${guard.action.toUpperCase()}: ${guard.reason}`);
     writeFileSync(url('../data/live.json'), JSON.stringify({
-      ts: Date.now(), connected: true, stale: true, reason: guard.reason, teams, filled, spent }, null, 1));
+      ts: Date.now(), session: SESSION, connected: true, stale: true,
+      reason: guard.reason, teams, filled, spent }, null, 1));
     return;
   }
 
@@ -86,7 +92,7 @@ const timer = setInterval(() => {
   const slotsLeft = me.slots - me.filled;
 
   writeFileSync(url('../data/live.json'), JSON.stringify({
-    ts: Date.now(), connected: true, stale: false, reason: null,
+    ts: Date.now(), session: SESSION, connected: true, stale: false, reason: null,
     league: CFG.league + ' (SIMULATED)', teams_n: CFG.teams, budget: CFG.budget,
     me: { budget: me.budget, filled: me.filled, slots: me.slots,
           maxBid: me.budget - (slotsLeft - 1) },

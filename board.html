@@ -117,7 +117,11 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
 .viab{grid-column:1/-1;font:11px/1.5 var(--mono);border-radius:5px;padding:6px 9px}
 .viab.ok{background:#3fb95015;color:var(--cool);border:1px solid #3fb95040}
 .viab.bad{background:#d2992218;color:#ffd98a;border:1px solid #d2992255}
+.viab.tight{background:#1f6feb1a;color:#9ecbff;border:1px solid #1f6feb55}
 .viab b{color:#fff}
+.share{font:12px/1.5 var(--mono);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:6px 9px;margin-bottom:8px}
+.share b{font-size:15px}
 
 /* ---- tier-break badges ---- */
 .badge{display:inline-block;font:700 8.5px/1.5 var(--mono);border-radius:3px;
@@ -150,6 +154,7 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
   </div>
   <div class="col">
     <h2>Budget plan <span id="planhdr"></span></h2>
+    <div class="share" id="share"></div>
     <div class="plan" id="plan"></div>
     <h2 style="margin-top:14px">On the block <span id="bankroll"></span></h2>
     <div id="block"></div>
@@ -176,7 +181,7 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
 
 <script>
 const DATA = {
-  "generatedAt": "2026-09-03T22:56:12.075Z",
+  "generatedAt": "2026-09-03T23:33:24.182Z",
   "baselines": {
     "QB": 221,
     "TE": 81,
@@ -3992,13 +3997,13 @@ const CFG  = {
   "_staleAfterMs": "Board shows a loud STALE banner if live.json is older than this.",
   "staleAfterMs": 10000,
 
-  "_strategy": "How you intend to SPEND, declared before the draft and tracked live. Not a mid-draft toggle: once your stars are bought or gone, the unspent star money rolls into the scrub pool automatically. starSlots/starBudget = how many premium players you want and how much of your $200 is reserved for them; set starBudget to 0 for the old flat-value behaviour. starTier = which tiers the star money is for. mustHave = specific players (by name) who get star pricing regardless of tier. marketBias = how much MORE than the board's target the room actually pays; 1.84 is what the 2026 Ozark room did (see docs/MARKET-2026-OZARK.md), 1.0 means trust the sheet exactly.",
+  "_strategy": "How you intend to SPEND, declared before the draft and tracked live. Not a mid-draft toggle: once your stars are bought or gone, the unspent star money rolls into the scrub pool automatically. starSlots/starBudget = how many premium players you want and how much of your $200 is reserved for them; set starBudget to 0 for the old flat-value behaviour. starTier = which tiers the star money is for. mustHave = specific players (by name) who get star pricing regardless of tier. marketBias = how much MORE than the board's target the room actually pays. Leave it null to use the measured curve from the 2026 Ozark draft, which varies through the draft (1.56x at the top where stars go, peaking near 2.1x in the middle, 1.68x at the end). Set a number to override the curve with a constant; 1.0 means trust the sheet exactly.",
   "strategy": {
-    "starSlots": 3,
-    "starBudget": 140,
+    "starSlots": 2,
+    "starBudget": 135,
     "starTier": 2,
     "mustHave": [],
-    "marketBias": 1.84
+    "marketBias": null
   },
 
   "_maxSalesPerTick": "A live auction sells one player at a time. If more than this many players vanish from the list in a single 2s tick, it is a rendering change (position filter, tab switch), not sales. The watcher refuses to diff and flags itself stale. This is the guard against KNOWN-ISSUES P0-1.",
@@ -4327,19 +4332,65 @@ function planViability({ plan, starPrices = [] }) {
     ? Math.round(starPrices.slice(0, need).reduce((a, p) => a + p, 0) / Math.min(need, starPrices.length))
     : 0;
 
-  // How many can the pot actually cover, buying cheapest-first among the ones
-  // we'd realistically target?
+  // How many of the players you'd actually TARGET can the pot cover? Walk them
+  // best-first, taking each if it still fits and skipping the ones that don't.
+  // Cheapest-first would flatter the plan: it answers "can I buy two stars"
+  // with the two cheapest star-tier players, which is not the plan you wrote.
   let afford = 0, budget = plan.starPot;
-  for (const price of [...starPrices].sort((a, b) => a - b)) {
+  for (const price of starPrices) {
     if (afford >= need) break;
-    if (budget >= price) { budget -= price; afford++; } else break;
+    if (budget >= price) { budget -= price; afford++; }
   }
-  const wanted = starPrices.slice(0, need).reduce((a, p) => a + p, 0);
-  return {
-    need, afford, typical,
-    shortfall: Math.max(Math.round(wanted - plan.starPot), 0),
-    ok: afford >= need,
-  };
+  const wanted    = starPrices.slice(0, need).reduce((a, p) => a + p, 0);
+  // If the plan is executable, there is no shortfall to report — you may not
+  // land the two most expensive names, but you can fill the star slots.
+  const shortfall = afford >= need ? 0 : Math.max(Math.round(wanted - plan.starPot), 0);
+  // Being $1 short of an estimate is not the same as being $60 short, and it
+  // shouldn't flip the verdict off a cliff — these are estimates, and one
+  // player going slightly cheap closes a small gap.
+  const tight = afford < need && shortfall > 0 && shortfall <= Math.max(plan.starPot * 0.12, 8);
+  return { need, afford, typical, shortfall, tight, ok: afford >= need };
+}
+
+/* Measured from the 2026 Ozark draft: price ÷ (book × inflation), bucketed by
+   how far through the draft the pick landed, keyed by the inflation reading at
+   the time. The room did NOT pay a constant premium — it was most irrational in
+   the middle, not at the top:
+
+       inflation 0.91  →  1.56x    (picks 1-10, where the stars go)
+       inflation 0.82  →  1.92x
+       inflation 0.68  →  2.11x    (peak overpaying)
+       inflation 0.55  →  2.01x
+       inflation 0.45  →  1.90x
+       inflation 0.35  →  1.72x
+       inflation 0.25  →  1.68x
+
+   An earlier version used the single aggregate figure of 1.84x everywhere. That
+   is right on average and wrong exactly where it matters most: it priced Gibbs
+   at $85 when he went for $73, and consequently claimed a $135 star budget
+   could only buy one star instead of two.
+
+   ONE DRAFT, 98 PLAYERS. Treat this as the shape of the room's behaviour, not
+   as a calibrated coefficient. Set `strategy.marketBias` to a number in
+   config.json to override the whole curve with a constant. */
+const BIAS_CURVE = [[0.91, 1.56], [0.82, 1.92], [0.68, 2.11], [0.55, 2.01],
+                    [0.45, 1.90], [0.35, 1.72], [0.25, 1.68]];
+
+/** How much more than the board's own target the room is likely to pay, at this
+ *  point in the draft. Linear interpolation between measured points, flat
+ *  outside the observed range. */
+function marketBiasAt(inflation, override = null) {
+  if (typeof override === 'number') return override;
+  const pts = BIAS_CURVE;                      // sorted by descending inflation
+  if (inflation >= pts[0][0]) return pts[0][1];
+  const last = pts[pts.length - 1];
+  if (inflation <= last[0]) return last[1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    if (inflation <= x0 && inflation >= x1)
+      return y0 + (y1 - y0) * ((x0 - inflation) / (x0 - x1));
+  }
+  return last[1];
 }
 
 /** What this player is likely to actually COST, versus what the sheet says he
@@ -4348,7 +4399,7 @@ function planViability({ plan, starPrices = [] }) {
 function priceView(player, opts = {}) {
   const { inflation = 1, strategy = {}, plan = null } = opts;
   const book = player?.value ?? 0;
-  const bias = strategy.marketBias ?? 1;
+  const bias = marketBiasAt(inflation, strategy.marketBias ?? null);
 
   const valueTarget = Math.max(Math.round(book * inflation), 1);   // the old board
   const marketEst   = Math.max(Math.round(book * inflation * bias), 1);
@@ -4392,6 +4443,37 @@ function afterSpending(price, { budget, filled, slots }) {
     perSlot: remaining > 0 ? left / remaining : 0,
     affordable: slotsLeft > 0 && left >= remaining,   // still $1 for every slot
   };
+}
+
+/** What to do with saved picks when a draft session identifies itself.
+ *
+ *  Every watcher/simulator run stamps live.json with a session id; the board
+ *  remembers which session its localStorage belongs to. Without this, state
+ *  accumulates silently across drafts: on Sep 3 a simulator run left seven
+ *  players marked "mine" on a board watching an unrelated mock, and nothing on
+ *  screen suggested anything was wrong (KNOWN-ISSUES P0-6).
+ *
+ *    adopt — nothing saved, or same session. Carry on.
+ *    wipe  — we know which draft these picks came from and it isn't this one.
+ *            Merging two drafts is never what anyone wants.
+ *    warn  — picks of unknown provenance. Could be a hand-marked draft in
+ *            progress, could be leftovers. Don't destroy them; say so loudly.
+ */
+function sessionAction({ savedSession, incomingSession, savedPickCount = 0 }) {
+  if (!incomingSession) return 'adopt';                  // offline / hand-driven
+  if (savedSession === incomingSession) return 'adopt';
+  if (savedSession) return 'wipe';
+  return savedPickCount > 0 ? 'warn' : 'adopt';
+}
+
+/** Your share of the money still in the room, and how that compares to an even
+ *  split among the teams still buying. Above 1.0x means you can outbid the room
+ *  on anything you actually want; below means you're being squeezed. */
+function moneyShare({ myBudget, moneyLeft, activeTeams }) {
+  const n = Math.max(activeTeams, 1);
+  const share = moneyLeft > 0 ? myBudget / moneyLeft : 0;
+  const even  = 1 / n;
+  return { share, evenShare: even, relative: even > 0 ? share / even : 0, activeTeams: n };
 }
 
 
@@ -4503,11 +4585,13 @@ function render() {
       <div class="big" style="color:var(--cool)">$${PLAN.scrubPot}</div>
       <div class="sub">${PLAN.scrubSlotsLeft} slots · <b style="color:var(--fg)">$${PLAN.perScrub.toFixed(1)}</b>/slot</div>
     </div>`
-    + (PLAN.planActive && VIAB.typical ? `<div class="viab ${VIAB.ok ? 'ok' : 'bad'}">
+    + (PLAN.planActive && VIAB.typical ? `<div class="viab ${VIAB.ok ? 'ok' : VIAB.tight ? 'tight' : 'bad'}">
         ${VIAB.ok
           ? `✓ plan holds — stars are going for about <b>$${VIAB.typical}</b>, and $${PLAN.starPot} covers the ${VIAB.need} you still want.`
-          : `⚠ stars are going for about <b>$${VIAB.typical}</b>. $${PLAN.starPot} buys <b>${VIAB.afford}</b>, not ${VIAB.need} —
-             raise starBudget by ~$${VIAB.shortfall} or drop starSlots to ${VIAB.afford}.`}
+          : VIAB.tight
+            ? `≈ tight — stars are going for about <b>$${VIAB.typical}</b>, so $${PLAN.starPot} is about <b>$${VIAB.shortfall}</b> short of ${VIAB.need}. One bargain closes it.`
+            : `⚠ stars are going for about <b>$${VIAB.typical}</b>. $${PLAN.starPot} buys <b>${VIAB.afford}</b>, not ${VIAB.need} —
+               raise starBudget by ~$${VIAB.shortfall} or drop starSlots to ${VIAB.afford}.`}
       </div>` : '');
 
   el('gap').textContent = L && !L.stale ? `infl ${infl.toFixed(2)}` : (L ? 'STALE' : 'offline');
@@ -4516,6 +4600,22 @@ function render() {
   el('bankroll').innerHTML = L?.me
     ? `$${L.me.budget} · ${L.me.filled}/${L.me.slots} · max bid <b>$${L.me.maxBid}</b>`
     : '<span style="color:var(--dimmer)">watcher not running</span>';
+
+  // --- SHARE OF THE MONEY LEFT ---
+  // The number that says whether you have leverage. With N teams still buying,
+  // an even split is 1/N; holding more than that means you can outbid the room
+  // on anything you want, and holding less means you're getting squeezed.
+  const liveTeams  = (L?.teams ?? []).filter(t => t.filled < t.slots);
+  const activeN    = Math.max(liveTeams.length, 1);
+  const poolLeft   = L?.moneyLeft ?? (CFG.teams * CFG.budget);
+  const myMoney    = L?.me?.budget ?? roster.budget;
+  const MS         = moneyShare({ myBudget: myMoney, moneyLeft: poolLeft, activeTeams: activeN });
+  const share = MS.share, rel = MS.relative;
+  const shareCol   = rel >= 1.25 ? 'cool' : rel <= 0.75 ? 'hot' : 'warm';
+  el('share').innerHTML = L
+    ? `<b style="color:var(--${shareCol})">${(share * 100).toFixed(1)}%</b>
+       <span style="color:var(--dimmer)">of the $${poolLeft} left · ${rel.toFixed(2)}× an even split of ${activeN}</span>`
+    : '<span style="color:var(--dimmer)">—</span>';
 
   // --- ON THE BLOCK ---
   // Three numbers, always visible. The old board showed only the first, which
@@ -4624,6 +4724,9 @@ function render() {
 ------------------------------------------------------------------------------ */
 const STALE_MS = CFG.staleAfterMs ?? 10000;
 function liveStatus() {
+  if (ORPHANED)       return { level: 'bad',
+                               msg: `${ORPHANED} saved picks on this board are from an EARLIER session — they may not belong to this draft.`,
+                               fix: 'If you are starting fresh, click ✦ New draft (top right). If you marked these by hand in this draft, ignore this.' };
   if (!LIVE)          return { level: 'warn', msg: 'WATCHER NOT RUNNING — every number below is straight off the sheet, with no inflation applied.',
                                fix: 'Start it with  ./watch.sh   · you can still mark picks by hand (Enter / ⇧Enter).' };
   const age = Date.now() - (LIVE.ts ?? 0);
@@ -4665,14 +4768,47 @@ el('reset').onclick = () => { if (confirm('Clear the whole draft?')) { state = {
 el('newdraft').onclick = () => {
   if (!confirm('Start a NEW draft?\n\nWipes every pick this browser remembers.\n\nAlso run  ./new-draft.sh  in the terminal so the watcher forgets the last draft too.')) return;
   try { for (const k of Object.keys(localStorage)) if (k.startsWith('draftboard:') || k.startsWith('ozark-draft-')) localStorage.removeItem(k); } catch {}
+  SESSION_ID = null; ORPHANED = 0;
   location.reload();
 };
 let LIVE = null;
+// Which draft the saved picks belong to. null means "we've never seen a
+// session", which is the case for a hand-driven draft with no watcher.
+let SESSION_ID = null, ORPHANED = 0;
+try { SESSION_ID = localStorage.getItem(LS + ':session'); } catch {}
 async function poll() {
   try {
     const r = await fetch('data/live.json?' + Date.now());
     if (r.ok) {
       LIVE = await r.json();
+
+      // A new draft session means these saved picks belong to a DIFFERENT
+      // draft. Wipe rather than merge: on Sep 3 a simulator run left seven
+      // players marked "mine" on a board watching an unrelated mock, and
+      // nothing on screen suggested anything was wrong (KNOWN-ISSUES P0-6).
+      const sid = LIVE.session?.id ?? null;
+      const act = sessionAction({ savedSession: SESSION_ID, incomingSession: sid,
+                                  savedPickCount: state.order.length });
+      if (sid && sid !== SESSION_ID) {
+        if (act === 'wipe') {
+          // We know which draft these picks came from, and it isn't this one.
+          // Wipe: merging two drafts is never what anyone wants.
+          state = { taken: {}, order: [] };
+          ORPHANED = 0;
+          toast(LIVE.session.source === 'simulator'
+            ? 'simulator started — cleared the previous draft'
+            : 'new draft detected — cleared the previous one');
+        } else if (act === 'warn') {
+          // Saved picks of unknown provenance: could be a hand-marked draft
+          // you're mid-way through, or leftovers from something else. We can't
+          // tell, so don't destroy them — but make it impossible to miss.
+          ORPHANED = state.order.length;
+        }
+        SESSION_ID = sid;
+        try { localStorage.setItem(LS + ':session', sid); } catch {}
+        save();
+      }
+
       // A tick the watcher flagged is a tick we don't copy picks out of — that
       // is how one bad read used to become permanent localStorage state.
       if (!LIVE.stale) {

@@ -327,6 +327,69 @@ very different situations.
 **Fixed.** The watcher keeps the last fully-trusted payload and replays it on a
 stale write, so the board shows the last good numbers clearly labelled frozen.
 
+## P0-6 — Board state accumulated silently across drafts (FIXED)
+
+**Severity: critical, and it produced a wrong roster with nothing on screen to
+suggest it.**
+
+After the mock, the board showed **seven players in "My roster" that had never
+been drafted by anyone** — De'Von Achane, Nico Collins, Omarion Hampton, Garrett
+Wilson, Emeka Egbuka, D'Andre Swift, Joe Burrow.
+
+They came from a `src/simulate.mjs` regression run: the simulator names its
+first team `You`, the board tab was still polling `data/live.json`, and it
+merged the simulator's picks into the real mock's localStorage. The watcher was
+innocent — its log shows zero `⭐ YOURS` lines and every mock pick attributed to
+`Team N`.
+
+The underlying hole was that **nothing identified which draft the saved picks
+belonged to**. Any live.json from any source — a previous draft, a mock, a test
+run — was merged into whatever the board already had.
+
+**Fixed** with session identity. Every watcher or simulator run stamps
+`live.json` with `session: { id, startedAt, league, source }`. The board records
+the session its localStorage belongs to and, on seeing a different one:
+
+- **known previous session → wipe.** Merging two drafts is never wanted.
+- **no recorded session but saved picks → warn, don't destroy.** Those picks
+  might be a hand-marked draft in progress. A red banner says how many there
+  are and points at ✦ New draft.
+- **same session, or no watcher → leave alone.** A hand-driven draft with no
+  watcher is never touched.
+
+`sessionAction()` in `src/model.mjs`, covered by tests. Both paths verified in
+the browser: the warning fires on orphaned state, and a genuine session change
+clears it.
+
+## P1-6 — marketBias was one number when the room used several (FIXED)
+
+The first cut of stars-and-scrubs applied a flat **1.84×** everywhere, from the
+aggregate over the 2026 draft. That is right on average and wrong exactly where
+it matters. Bias by draft phase:
+
+| picks | bias | avg inflation |
+|---|---|---|
+| 1–10 | **1.56×** | 0.91 |
+| 11–20 | 1.92× | 0.82 |
+| 21–30 | **2.11×** | 0.68 |
+| 31–45 | 2.01× | 0.55 |
+| 46–60 | 1.90× | 0.45 |
+| 61–80 | 1.72× | 0.35 |
+| 81–110 | 1.68× | 0.25 |
+
+The room was most irrational in the **middle**, not at the top. Stars go in the
+first ten picks, where the real figure is 1.56×. Using 1.84× priced Gibbs at $85
+when he sold for $73, and wrongly reported that a $135 star budget could only
+buy one star.
+
+**Fixed.** `marketBiasAt(inflation)` interpolates the measured curve, keyed on
+inflation as the phase proxy. Backtested: Gibbs now estimates $75 against an
+actual $73. `strategy.marketBias` set to a number still overrides the curve with
+a constant; `null` uses the curve.
+
+**Caveat that belongs on this number: one draft, 98 players, seven buckets.**
+It is the shape of one room's behaviour, not a calibrated coefficient.
+
 ## Still open
 
 - **`extract.js` returns junk rows.** One parsed entry was `{"name":"CEL",

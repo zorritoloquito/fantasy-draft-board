@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { checkGuards, reconcileGone, inflationOf, tierScarcity, tierBadge,
          planState, priceView, isStarCandidate, afterSpending,
-         planViability, salesAllowed } from './model.mjs';
+         planViability, salesAllowed, sessionAction, moneyShare, marketBiasAt } from './model.mjs';
 
 const SHEET = JSON.parse(readFileSync(new URL('../data/players.json', import.meta.url)));
 const P = SHEET.players;
@@ -318,6 +318,48 @@ t('the live filter reading uses Yahoo\'s real format (pos=TE, not pos_type=TE)',
                      totalPlayers: P.length, posFilter: f }).action, 'ok', f);
 });
 
+console.log('\nDraft session identity (KNOWN-ISSUES P0-6)');
+t('a known previous session that differs is wiped, not merged', () => {
+  eq(sessionAction({ savedSession: 'abc', incomingSession: 'xyz', savedPickCount: 30 }), 'wipe');
+});
+t('the same session is left alone', () => {
+  eq(sessionAction({ savedSession: 'abc', incomingSession: 'abc', savedPickCount: 30 }), 'adopt');
+});
+t('picks of unknown provenance are warned about, never destroyed', () => {
+  // The exact Sep 3 case: contaminated state predating sessions entirely.
+  eq(sessionAction({ savedSession: null, incomingSession: 'xyz', savedPickCount: 7 }), 'warn');
+});
+t('an empty board just adopts whatever session appears', () => {
+  eq(sessionAction({ savedSession: null, incomingSession: 'xyz', savedPickCount: 0 }), 'adopt');
+});
+t('no watcher means no opinion — a hand-marked draft is never touched', () => {
+  eq(sessionAction({ savedSession: null, incomingSession: null, savedPickCount: 40 }), 'adopt');
+  eq(sessionAction({ savedSession: 'abc', incomingSession: null, savedPickCount: 40 }), 'adopt');
+});
+
+console.log('\nShare of the money left');
+t('an even split reads as 1.00x', () => {
+  const m = moneyShare({ myBudget: 100, moneyLeft: 1000, activeTeams: 10 });
+  ok(Math.abs(m.share - 0.10) < 1e-9);
+  ok(Math.abs(m.relative - 1) < 1e-9);
+});
+t('holding double the average reads as 2.00x', () => {
+  ok(Math.abs(moneyShare({ myBudget: 200, moneyLeft: 1000, activeTeams: 10 }).relative - 2) < 1e-9);
+});
+t('fewer teams still buying raises the bar for an even split', () => {
+  // Same $100 of $1000. Against 10 rivals an even share is $100, so 1.00x.
+  // Against 4, an even share is $250, so the same money is only 0.40x.
+  const early = moneyShare({ myBudget: 100, moneyLeft: 1000, activeTeams: 10 });
+  const late  = moneyShare({ myBudget: 100, moneyLeft: 1000, activeTeams: 4 });
+  ok(Math.abs(early.relative - 1.0) < 1e-9, `early ${early.relative}`);
+  ok(Math.abs(late.relative  - 0.4) < 1e-9, `late ${late.relative}`);
+  ok(late.relative < early.relative, 'leverage must fall as rivals concentrate');
+});
+t('no money left never divides by zero', () => {
+  const m = moneyShare({ myBudget: 0, moneyLeft: 0, activeTeams: 0 });
+  ok(Number.isFinite(m.share) && Number.isFinite(m.relative));
+});
+
 console.log('\nBudget plan / stars-and-scrubs (ROADMAP 2)');
 const STRAT = { starSlots: 3, starBudget: 140, starTier: 2, mustHave: [], marketBias: 1.84 };
 const ROSTER = { budget: 200, filled: 0, slots: 15 };
@@ -331,9 +373,13 @@ t('viability: $140 across 3 stars cannot buy 3 stars at $60-75', () => {
   ok(v.shortfall > 0, 'should quantify the gap');
 });
 t('viability: a realistic plan reports ok', () => {
+  // $135 buys the $75 target, leaving $60 — not enough for the $68 but enough
+  // for the $62 further down the board. Two star slots filled.
   const plan = planState({ budget: 200, filled: 0, slots: 15,
                            strategy: { ...STRAT, starSlots: 2, starBudget: 135 } });
-  eq(planViability({ plan, starPrices: [75, 68, 62] }).ok, true);
+  const v = planViability({ plan, starPrices: [75, 68, 62, 58] });
+  eq(v.afford, 2);
+  eq(v.ok, true);
 });
 t('viability degrades safely with no star candidates left', () => {
   const plan = planState({ ...ROSTER, strategy: STRAT });
@@ -419,6 +465,67 @@ t('marketBias 1.0 reproduces the old board exactly', () => {
   const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');
   const v = priceView(gibbs, { inflation: 0.95, strategy: { ...STRAT, marketBias: 1 } });
   eq(v.marketEst, v.valueTarget);
+});
+
+t('the bias curve is lower at the top of the draft than in the middle', () => {
+  // The room was most irrational in the middle, not on the elite players.
+  ok(marketBiasAt(0.95) < marketBiasAt(0.68), 'early should be cheaper than mid');
+  ok(marketBiasAt(0.25) < marketBiasAt(0.68), 'late should be cheaper than mid');
+  ok(Math.abs(marketBiasAt(0.91) - 1.56) < 0.01);
+  ok(Math.abs(marketBiasAt(0.68) - 2.11) < 0.01);
+});
+t('the curve is flat outside the range it was measured over', () => {
+  eq(marketBiasAt(1.5), marketBiasAt(0.91));
+  eq(marketBiasAt(0.01), marketBiasAt(0.25));
+});
+t('an explicit marketBias overrides the curve everywhere', () => {
+  eq(marketBiasAt(0.9, 1.3), 1.3);
+  eq(marketBiasAt(0.3, 1.3), 1.3);
+});
+t('BACKTEST: Gibbs is now priced near what he actually cost ($73)', () => {
+  const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');      // book $48
+  const v = priceView(gibbs, { inflation: 0.95, strategy: { ...STRAT, marketBias: null } });
+  ok(Math.abs(v.marketEst - 73) <= 8, `estimate ${v.marketEst}, actual $73`);
+});
+t('BACKTEST: the curve prices the real tier-1 RBs within a few dollars', () => {
+  // Gibbs actually went for $73, Bijan for $72.
+  const est = id => priceView(P.find(p => p.id === id),
+    { inflation: 0.95, strategy: { ...STRAT, marketBias: null } }).marketEst;
+  ok(Math.abs(est('RB:Jahmyr Gibbs')   - 73) <= 8, `Gibbs ${est('RB:Jahmyr Gibbs')} vs $73`);
+  ok(Math.abs(est('RB:Bijan Robinson') - 72) <= 10, `Bijan ${est('RB:Bijan Robinson')} vs $72`);
+});
+t('a plan a few dollars short reads as TIGHT, not impossible', () => {
+  const plan = planState({ budget: 200, filled: 0, slots: 15,
+                           strategy: { ...STRAT, starSlots: 2, starBudget: 135 } });
+  // Only two candidates exist and together they cost $136 against a $135 pot.
+  const v = planViability({ plan, starPrices: [71, 65] });
+  eq(v.ok, false, 'cannot buy both');
+  eq(v.tight, true, 'a $1 gap must not read the same as a $60 gap');
+  eq(v.shortfall, 1);
+});
+t('viability is judged on the players you want, not the cheapest two', () => {
+  // Cheapest-first would call this fine by pairing the two cheapest star-tier
+  // players — which is not the plan anyone wrote.
+  const plan = planState({ budget: 200, filled: 0, slots: 15,
+                           strategy: { ...STRAT, starSlots: 2, starBudget: 100 } });
+  const v = planViability({ plan, starPrices: [75, 69, 66, 61, 58] });
+  eq(v.afford, 1, 'only the best one fits, then nothing else does');
+  eq(v.ok, false);
+});
+t('an executable plan reports no shortfall', () => {
+  const plan = planState({ budget: 200, filled: 0, slots: 15,
+                           strategy: { ...STRAT, starSlots: 2, starBudget: 135 } });
+  const v = planViability({ plan, starPrices: [75, 69, 66, 61, 58] });
+  eq(v.ok, true);
+  eq(v.shortfall, 0);
+});
+t('a plan badly short is not softened into TIGHT', () => {
+  const plan = planState({ budget: 200, filled: 0, slots: 15,
+                           strategy: { ...STRAT, starSlots: 3, starBudget: 140 } });
+  const v = planViability({ plan, starPrices: [75, 68, 62] });
+  eq(v.ok, false);
+  eq(v.tight, false);
+  ok(v.shortfall > 50);
 });
 
 t('starBudget 0 is flat value, the pre-existing behaviour', () => {

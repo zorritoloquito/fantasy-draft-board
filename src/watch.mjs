@@ -24,6 +24,14 @@ const MY_TEAM = CFG.myTeamName || '';
 const TOTVAL = SHEET.players.reduce((a, p) => a + (p.value || 0), 0);
 const PICKLOG = url(`../data/picks-${new Date().toISOString().slice(0, 10)}.ndjson`);
 
+// Every run of the watcher is a distinct draft session. The board records which
+// session its saved picks belong to and wipes them when it sees a new one.
+// Without this, state silently accumulates across drafts, mocks and test runs:
+// a simulator pass on Sep 3 left seven players marked as "mine" on a board that
+// was watching an unrelated mock. See KNOWN-ISSUES P0-6.
+const SESSION = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+                  startedAt: Date.now(), league: CFG.league, source: 'watcher' };
+
 console.log(`league: ${CFG.league} · ${TEAMS} teams × $${BUDGET} = $${TEAMS * BUDGET} pool · ${CFG.rosterSlots} spots`);
 if (TEAMS === 10 && BUDGET === 200) console.log('  (defaults — confirm these match the actual draft room)');
 
@@ -150,7 +158,8 @@ try {
 /* ---------- write ---------- */
 let lastErr = null, lastGuard = null, tick = 0;
 function writeState(o) {
-  writeFileSync(url('../data/live.json'), JSON.stringify({ ts: Date.now(), ...o }, null, 1));
+  writeFileSync(url('../data/live.json'),
+    JSON.stringify({ ts: Date.now(), session: SESSION, ...o }, null, 1));
 }
 // A stale tick still carries the last trusted numbers, clearly marked frozen.
 // Writing a bare {stale:true} blanked the roster and the nomination, so the
