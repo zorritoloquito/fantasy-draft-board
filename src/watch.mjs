@@ -11,7 +11,7 @@
 // When a guard trips we still write live.json, marked `stale` with a reason, so
 // the board can shout. Writing nothing is what made P0-2 invisible.
 import { readFileSync, writeFileSync, appendFileSync, existsSync, unlinkSync } from 'node:fs';
-import { checkGuards, reconcileGone, inflationOf } from './model.mjs';
+import { checkGuards, reconcileGone, inflationOf, salesAllowed } from './model.mjs';
 
 const url = p => new URL(p, import.meta.url);
 const CFG = JSON.parse(readFileSync(url('../config.json')));
@@ -135,7 +135,8 @@ try {
 console.log('watching draft room…  writing data/live.json');
 
 /* ---------- state ---------- */
-let lastAvail = null, soldOrder = [];
+let lastAvail = null, soldOrder = [], lastBudgets = null, lastFilled = null;
+let lastGood = {};        // last fully-trusted payload, replayed while stale
 const boughtBy = {};          // playerId -> team name that won him
 const priceOf  = {};          // playerId -> $ paid, when we caught the banner
 try {
@@ -150,6 +151,14 @@ try {
 let lastErr = null, lastGuard = null, tick = 0;
 function writeState(o) {
   writeFileSync(url('../data/live.json'), JSON.stringify({ ts: Date.now(), ...o }, null, 1));
+}
+// A stale tick still carries the last trusted numbers, clearly marked frozen.
+// Writing a bare {stale:true} blanked the roster and the nomination, so the
+// board said "watcher not running" while the watcher was in fact running and
+// deliberately holding — two very different problems shown identically.
+function writeStale(reason, teams, filled, spent) {
+  return writeState({ ...lastGood, connected: true, stale: true, reason,
+                      teams, filled, spent });
 }
 function logPick(id, buyer, price) {
   try {
@@ -182,6 +191,20 @@ setInterval(async () => {
   const filled = s.teams.reduce((a, t) => a + t.filled, 0);
   const spent  = s.teams.reduce((a, t) => a + (BUDGET - t.budget), 0);
 
+  // Sale price, derived rather than scraped. Yahoo never prints the price of
+  // the last sale anywhere we can read, but the winning team's budget drops by
+  // exactly it. If precisely one team's budget fell this tick, that's the buyer
+  // and that's the price — no regex, no guessing, and it cross-checks the
+  // banner's own attribution.
+  let saleBuyer = null, salePrice = null;
+  if (lastBudgets) {
+    const drops = s.teams
+      .map(t => ({ name: t.name, d: (lastBudgets.get(t.name) ?? t.budget) - t.budget }))
+      .filter(x => x.d > 0);
+    if (drops.length === 1) { saleBuyer = drops[0].name; salePrice = drops[0].d; }
+  }
+  lastBudgets = new Map(s.teams.map(t => [t.name, t.budget]));
+
   /* ---- guards (KNOWN-ISSUES P0-1) ----
      A position filter drops every other position from the DOM at once. Both
      tells are cheap to check and neither needs to know Yahoo's markup. */
@@ -191,6 +214,7 @@ setInterval(async () => {
   const guard = checkGuards({
     posSeen, vanishedCount: vanished.length, filled,
     totalPlayers: SHEET.players.length, maxSalesPerTick: MAX_SALES_PER_TICK,
+    posFilter: s.posFilter ?? null,
   });
 
   if (guard.action === 'refuse') {
@@ -199,8 +223,7 @@ setInterval(async () => {
     // tick recovers on its own.
     if (guard.reason !== lastGuard) console.error(`⚠ ${guard.reason}`);
     lastGuard = guard.reason;
-    return writeState({ connected: true, stale: true, reason: guard.reason,
-      teams: s.teams, filled, spent });
+    return writeStale(guard.reason, s.teams, filled, spent);
   }
   lastGuard = null;
 
@@ -210,16 +233,37 @@ setInterval(async () => {
     // `filled`, so the sold list stays honest and the next tick is normal.
     console.error(`⚠ ${guard.reason}`);
     lastAvail = availIds;
-    return writeState({ connected: true, stale: true, reason: guard.reason,
-      teams: s.teams, filled, spent });
+    lastFilled = filled;          // don't let the blackout look like a burst of sales
+    return writeStale(guard.reason, s.teams, filled, spent);
   }
 
-  /* ---- record sales ---- */
+  /* ---- record sales ----
+     Yahoo's own `filled` count is the authority on whether anyone was actually
+     bought. Observed live on Sep 3: after a re-sync adopted a fresh baseline
+     mid-scroll, the next tick showed two players missing and recorded
+     "SOLD ▸ Aaron Rodgers" and "SOLD ▸ Cooper Kupp" — neither had been
+     nominated. Both had a null buyer and a null price, because no team's
+     budget had moved: nothing was sold.
+
+     So a disappearance is only a sale if `filled` went up, and we can never
+     record more sales in one tick than `filled` went up by. */
+  const filledDelta = salesAllowed({ filled, lastFilled });
+  lastFilled = filled;
+
+  let recorded = 0;
   for (const id of vanished) if (!soldOrder.includes(id)) {
+    if (recorded >= filledDelta) {
+      // Yahoo says nobody (else) was bought, so this player didn't vanish
+      // because he sold. Leave him out of soldOrder entirely.
+      continue;
+    }
+    recorded++;
     soldOrder.push(id);
     const won = s.last && matchPlayer(s.last);
-    const buyer = (won && won.id === id && s.last.by) ? s.last.by : null;
-    const price = (won && won.id === id && s.last.price != null) ? s.last.price : null;
+    const bannerBuyer = (won && won.id === id && s.last.by) ? s.last.by : null;
+    // Prefer the budget-delta attribution; fall back to the banner.
+    const buyer = saleBuyer ?? bannerBuyer;
+    const price = salePrice;
     if (buyer) boughtBy[id] = buyer;
     if (price != null) priceOf[id] = price;
     logPick(id, buyer, price);                       // P1-3: durable pick record
@@ -229,10 +273,7 @@ setInterval(async () => {
 
   if (s.last && isMine(s.last.by)) {
     const won = matchPlayer(s.last);
-    if (won && !availIds.has(won.id)) {
-      boughtBy[won.id] = s.last.by;
-      if (s.last.price != null) priceOf[won.id] = s.last.price;
-    }
+    if (won && !availIds.has(won.id)) boughtBy[won.id] = s.last.by;
   }
 
   const me = s.teams.find(t => isMine(t.name));
@@ -258,6 +299,17 @@ setInterval(async () => {
 
   const nominated = s.nominated ? matchPlayer(s.nominated) : null;
   const slotsLeft = me ? me.slots - me.filled : CFG.rosterSlots;
+
+  lastGood = {
+    me: me ? { budget: me.budget, filled: me.filled, slots: me.slots,
+               maxBid: me.budget - (slotsLeft - 1) } : null,
+    nominated: nominated ? { ...nominated, target: Math.round(nominated.value * inflation) } : null,
+    block: s.block, last: s.last,
+    inflation, moneyLeft, valueLeft,
+    soldIds: goneList.map(p => p.id),
+    mineIds: Object.keys(boughtBy).filter(id => isMine(boughtBy[id])),
+    boughtBy, priceOf,
+  };
 
   writeState({
     connected: true, stale: false, reason: null,

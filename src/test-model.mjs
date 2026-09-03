@@ -2,7 +2,9 @@
 // Ozark auction. Each case below is taken from docs/KNOWN-ISSUES.md, with the
 // real numbers observed on the night.
 import { readFileSync } from 'node:fs';
-import { checkGuards, reconcileGone, inflationOf, tierScarcity, tierBadge } from './model.mjs';
+import { checkGuards, reconcileGone, inflationOf, tierScarcity, tierBadge,
+         planState, priceView, isStarCandidate, afterSpending,
+         planViability, salesAllowed } from './model.mjs';
 
 const SHEET = JSON.parse(readFileSync(new URL('../data/players.json', import.meta.url)));
 const P = SHEET.players;
@@ -41,6 +43,20 @@ t('a quiet tick with zero sales passes', () => {
 t('late draft, thin pool, few positions left is NOT treated as a filter', () => {
   eq(checkGuards({ posSeen: new Set(['WR']), vanishedCount: 1,
                    filled: P.length - 5, totalPlayers: P.length }).action, 'ok');
+});
+
+t('Yahoo\'s own filter state is believed over any heuristic', () => {
+  // Verified against a live draft room Sep 3: extract.js reads "pos_type=All".
+  eq(checkGuards({ posSeen: new Set(['QB','RB','WR','TE']), vanishedCount: 0, filled: 5,
+                   totalPlayers: P.length, posFilter: 'pos_type=All' }).action, 'ok');
+  const g = checkGuards({ posSeen: new Set(['QB','RB','WR','TE']), vanishedCount: 0, filled: 5,
+                          totalPlayers: P.length, posFilter: 'pos_type=TE' });
+  eq(g.action, 'refuse');
+  ok(/filtered \(TE\)/.test(g.reason), `reason was: ${g.reason}`);
+});
+t('a missing filter reading falls back to the heuristics', () => {
+  eq(checkGuards({ posSeen: new Set(['TE']), vanishedCount: 0, filled: 5,
+                   totalPlayers: P.length, posFilter: null }).action, 'refuse');
 });
 
 console.log('\nClicking around the draft room mid-auction');
@@ -265,6 +281,172 @@ t('a fully drafted position degrades without throwing', () => {
   eq(S.TE.best, null);
   eq(S.TE.goneFrac, 1);
   eq(tierBadge(null, 'TE'), null);
+});
+
+console.log('\nFound in a live mock draft, Sep 3');
+t('a disappearance is only a sale if Yahoo\'s filled count went up', () => {
+  eq(salesAllowed({ filled: 16, lastFilled: 16 }), 0, 'nothing filled, nothing sold:');
+  eq(salesAllowed({ filled: 17, lastFilled: 16 }), 1);
+  eq(salesAllowed({ filled: 19, lastFilled: 16 }), 3);
+  eq(salesAllowed({ filled: 16, lastFilled: null }), 0, 'first tick has no baseline:');
+  eq(salesAllowed({ filled: 15, lastFilled: 16 }), 0, 'filled going backwards is not negative sales:');
+});
+
+t('the Rodgers/Kupp phantom cannot be recorded', () => {
+  // Two players vanished from the DOM after a re-sync while Yahoo's filled
+  // count stayed at 16. Nothing was bought, so nothing may be recorded.
+  const allowed = salesAllowed({ filled: 16, lastFilled: 16 });
+  const vanished = ['QB:Aaron Rodgers', 'WR:Cooper Kupp'];
+  const recorded = vanished.slice(0, allowed);
+  eq(recorded.length, 0);
+});
+
+t('a real sale alongside phantoms records only the real one', () => {
+  const allowed = salesAllowed({ filled: 17, lastFilled: 16 });
+  eq(allowed, 1);
+  eq(['WR:A.J. Brown', 'QB:Aaron Rodgers', 'WR:Cooper Kupp'].slice(0, allowed).length, 1);
+});
+
+t('the live filter reading uses Yahoo\'s real format (pos=TE, not pos_type=TE)', () => {
+  // The live room reported "pos=TE"; the earlier probe saw "pos_type=All".
+  // Both must work.
+  for (const f of ['pos=TE', 'pos_type=TE', 'pos=RB'])
+    eq(checkGuards({ posSeen: new Set(['QB','RB','WR','TE']), vanishedCount: 0, filled: 5,
+                     totalPlayers: P.length, posFilter: f }).action, 'refuse', f);
+  for (const f of ['pos=All', 'pos_type=All'])
+    eq(checkGuards({ posSeen: new Set(['QB','RB','WR','TE']), vanishedCount: 0, filled: 5,
+                     totalPlayers: P.length, posFilter: f }).action, 'ok', f);
+});
+
+console.log('\nBudget plan / stars-and-scrubs (ROADMAP 2)');
+const STRAT = { starSlots: 3, starBudget: 140, starTier: 2, mustHave: [], marketBias: 1.84 };
+const ROSTER = { budget: 200, filled: 0, slots: 15 };
+
+t('viability: $140 across 3 stars cannot buy 3 stars at $60-75', () => {
+  const plan = planState({ ...ROSTER, strategy: STRAT });
+  const v = planViability({ plan, starPrices: [75, 68, 62, 58, 55] });
+  eq(v.need, 3);
+  eq(v.afford, 2, 'the pot really buys 2:');
+  eq(v.ok, false);
+  ok(v.shortfall > 0, 'should quantify the gap');
+});
+t('viability: a realistic plan reports ok', () => {
+  const plan = planState({ budget: 200, filled: 0, slots: 15,
+                           strategy: { ...STRAT, starSlots: 2, starBudget: 135 } });
+  eq(planViability({ plan, starPrices: [75, 68, 62] }).ok, true);
+});
+t('viability degrades safely with no star candidates left', () => {
+  const plan = planState({ ...ROSTER, strategy: STRAT });
+  const v = planViability({ plan, starPrices: [] });
+  ok(Number.isFinite(v.afford) && Number.isFinite(v.shortfall));
+});
+
+t('an untouched plan reserves the star money and starves the rest', () => {
+  const pl = planState({ ...ROSTER, strategy: STRAT });
+  eq(pl.starsLeft, 3);
+  eq(pl.scrubSlotsLeft, 12);
+  eq(pl.starPot, 140);
+  eq(pl.perStar, 46);
+  ok(Math.abs(pl.perScrub - 5) < 0.01, `perScrub ${pl.perScrub}`);
+});
+
+t('maxBid matches Yahoo: budget minus $1 per other empty slot', () => {
+  eq(planState({ ...ROSTER, strategy: STRAT }).maxBid, 186);
+  eq(planState({ budget: 58, filled: 9, slots: 15, strategy: STRAT }).maxBid, 53);
+});
+
+t('buying a star shrinks the pot and re-prices the ones left', () => {
+  // paid $73 for Gibbs: 1 star down, $127 left, 14 slots
+  const pl = planState({ budget: 127, filled: 1, slots: 15, strategy: STRAT, myStarsBought: 1 });
+  eq(pl.starsLeft, 2);
+  eq(pl.scrubSlotsLeft, 12);
+  ok(pl.perStar > 0 && pl.perStar <= pl.maxBid, `perStar ${pl.perStar} vs maxBid ${pl.maxBid}`);
+});
+
+t('the star plan retires itself once the stars are bought — no toggle needed', () => {
+  const pl = planState({ budget: 60, filled: 3, slots: 15, strategy: STRAT, myStarsBought: 3 });
+  eq(pl.starsLeft, 0);
+  eq(pl.starPot, 0, 'star pot should be gone:');
+  eq(pl.planActive, false);
+  eq(pl.scrubPot, 60, 'everything rolls into the scrub pool:');
+});
+
+t('a star target never exceeds what you can actually bid', () => {
+  const pl = planState({ budget: 40, filled: 10, slots: 15, strategy: STRAT, myStarsBought: 0 });
+  ok(pl.perStar <= pl.maxBid, `perStar ${pl.perStar} > maxBid ${pl.maxBid}`);
+  ok(pl.starPot >= 0 && pl.scrubPot >= 0, 'pots must never go negative');
+});
+
+t('tier decides who the star money is for; mustHave overrides it', () => {
+  const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');       // T1
+  const mid   = P.find(p => p.tier === 4 && p.pos === 'RB');
+  ok(isStarCandidate(gibbs, STRAT));
+  ok(!isStarCandidate(mid, STRAT));
+  ok(isStarCandidate(mid, { ...STRAT, mustHave: [mid.name] }), 'mustHave should promote him');
+  eq(isStarCandidate(null, STRAT), false);
+});
+
+t('priceView separates what he is worth from what he will cost', () => {
+  const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');       // book $48
+  const plan  = planState({ ...ROSTER, strategy: STRAT });
+  const v = priceView(gibbs, { inflation: 0.95, strategy: STRAT, plan });
+  eq(v.book, 48);
+  eq(v.valueTarget, 46, 'the old board would have said $46:');
+  eq(v.lane, 'star');
+  ok(v.marketEst > 80, `market estimate too low: ${v.marketEst}`);
+  ok(v.planMax >= v.valueTarget, 'the plan must allow at least the value target');
+});
+
+t('BACKTEST: the old board could never have won Gibbs; the plan can', () => {
+  // He actually sold for $73.
+  const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');
+  const plan  = planState({ ...ROSTER, strategy: STRAT });
+  const v = priceView(gibbs, { inflation: 0.95, strategy: STRAT, plan });
+  ok(v.valueTarget < 73, `old target ${v.valueTarget} should lose to $73`);
+  ok(v.marketEst >= 73, `market estimate ${v.marketEst} should have warned us he costs ~$73`);
+  ok(plan.maxBid >= 73, 'the plan must at least permit the winning bid');
+});
+
+t('a non-star cannot quietly eat the money the roster still needs', () => {
+  const mid  = P.find(p => p.tier === 4 && p.pos === 'RB');
+  const plan = planState({ budget: 20, filled: 10, slots: 15, strategy: STRAT });
+  const v = priceView(mid, { inflation: 1.5, strategy: STRAT, plan });
+  ok(v.planMax <= plan.maxBid, `planMax ${v.planMax} exceeds maxBid ${plan.maxBid}`);
+  ok(v.planMax >= 1);
+});
+
+t('marketBias 1.0 reproduces the old board exactly', () => {
+  const gibbs = P.find(p => p.id === 'RB:Jahmyr Gibbs');
+  const v = priceView(gibbs, { inflation: 0.95, strategy: { ...STRAT, marketBias: 1 } });
+  eq(v.marketEst, v.valueTarget);
+});
+
+t('starBudget 0 is flat value, the pre-existing behaviour', () => {
+  const pl = planState({ ...ROSTER, strategy: { ...STRAT, starSlots: 0, starBudget: 0 } });
+  eq(pl.planActive, false);
+  eq(pl.starPot, 0);
+  eq(pl.scrubPot, 200);
+});
+
+t('the consequence line is arithmetically right', () => {
+  const a = afterSpending(73, { budget: 200, filled: 0, slots: 15 });
+  eq(a.left, 127);
+  eq(a.remaining, 14);
+  ok(Math.abs(a.perSlot - 9.07) < 0.01, `perSlot ${a.perSlot}`);
+  ok(a.affordable);
+});
+
+t('a bid that would leave the roster unfillable is flagged', () => {
+  eq(afterSpending(58, { budget: 60, filled: 10, slots: 15 }).affordable, false);
+  eq(afterSpending(55, { budget: 60, filled: 10, slots: 15 }).affordable, true);
+});
+
+t('a full roster degrades without dividing by zero', () => {
+  const a = afterSpending(0, { budget: 5, filled: 15, slots: 15 });
+  eq(a.perSlot, 0);
+  const pl = planState({ budget: 5, filled: 15, slots: 15, strategy: STRAT });
+  eq(pl.slotsLeft, 0);
+  ok(Number.isFinite(pl.perScrub));
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

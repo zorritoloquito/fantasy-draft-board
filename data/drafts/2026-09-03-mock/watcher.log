@@ -1,0 +1,16 @@
+league: 2026 Draft (Sep 3) · 10 teams × $200 = $2000 pool · 15 spots
+  (defaults — confirm these match the actual draft room)
+watching draft room…  writing data/live.json
+SOLD ▸ Nico Collins              $44 → Team 7
+SOLD ▸ Josh Allen                $21 → Team 1
+⚠ the player list is filtered (pos=TE) — set the position filter back to All.
+⚠ 27 players left the list at once — re-synced against Yahoo's pick count rather than counting them as sales.
+SOLD ▸ Chase Brown               $46 → Team 4
+SOLD ▸ George Pickens            $40 → Team 1
+⚠ 142 players left the list at once — re-synced against Yahoo's pick count rather than counting them as sales.
+SOLD ▸ Aaron Rodgers                 
+SOLD ▸ Cooper Kupp                   
+⚠ 90 players left the list at once — re-synced against Yahoo's pick count rather than counting them as sales.
+SOLD ▸ A.J. Brown                $36 → Team 8
+⚠ the player list is filtered (pos=TE) — set the position filter back to All.
+⚠ the player list is filtered (pos=RB) — set the position filter back to All.

@@ -158,23 +158,50 @@ Ported from the xlsx formulas, verified to the rounded percent.
   Offer" to the dollar. It's a roster-filling ceiling, not a value judgment —
   bid to *target*, not to max.
 
+## Strategy: the budget plan
+
+`config.json` carries a `strategy` block. It is declared before the draft and
+tracked live — there is deliberately no mid-draft toggle.
+
+```json
+"strategy": { "starSlots": 3, "starBudget": 140, "starTier": 2, "marketBias": 1.84 }
+```
+
+The board shows two pots (star money / everyone else) that rebalance as you buy,
+and for every player three numbers rather than one:
+
+| WORTH | LIKELY COST | YOUR MAX |
+|---|---|---|
+| book × inflation — the old board | × `marketBias`, the measured gap | what the plan affords |
+
+Plus a viability check that does the arithmetic you'd otherwise do in your head:
+
+> ⚠ stars are going for about **$68**. $140 buys **2**, not 3 — raise
+> starBudget by ~$65 or drop starSlots to 2.
+
+When your stars are bought or the window closes, the reserve rolls into the
+scrub pool automatically. `starBudget: 0` gives you the old flat-value board.
+
 ## What the market actually pays
 
 `docs/MARKET-2026-OZARK.md` measures the 2026 draft against the sheet, from
 Yahoo's own results page. The headline:
 
-| tier | paid ÷ sheet value |
-|---|---|
-| 1 | **1.59×** |
-| 2 | 1.31× |
-| 3 | 1.13× |
-| 4 | 0.75× |
-| 5+ | **0.48×** |
+| tier | vs sheet value | vs the board's own target |
+|---|---|---|
+| 1 | 1.59× | **1.85×** |
+| 2 | 1.31× | **1.87×** |
+| 3 | 1.13× | 1.85× |
+| 4 | 0.75× | 1.84× |
+| 5+ | 0.48× | 1.57× |
 
-Sheet value is not what a player costs — it's what he costs *relative to his
-tier*. A board pricing Gibbs at $48 × inflation will never win Gibbs; he cleared
-at $73. This is the quantified version of "the entire top tier went unbid", and
-it's the input stars-and-scrubs pricing has to clear (ROADMAP 2).
+The left column looks like a tier effect. It isn't — it's *timing*. Tier 1 sells
+when inflation is 0.95 and tier 5 when it's 0.19, and inflation already accounts
+for that. Once you divide by the board's own recommendation, **every tier comes
+out at the same ~1.85×**.
+
+So the flat-value model isn't specifically bad at pricing stars. It is uniformly
+low, everywhere, by a factor of nearly two. That is what `marketBias` corrects.
 
 Regenerate with `node src/analyze-picks.mjs`.
 

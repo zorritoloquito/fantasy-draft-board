@@ -55,7 +55,43 @@ presentation problem, not a modeling one.
 
 </details>
 
-## 2. Stars-and-scrubs mode
+## 2. Stars-and-scrubs mode — ✅ DONE (Sep 3, 2026)
+
+Built, but **not** as the toggle described below. Measuring the 2026 draft
+showed the flat-value model wasn't specifically bad at stars — once inflation is
+accounted for, it was uniformly ~1.84× low at *every* tier (1.85 / 1.87 / 1.85 /
+1.84 / 1.57). Tier multipliers would have been fitting noise on nine picks.
+
+And a mid-draft mode switch is the wrong shape: you commit to a strategy and
+stay on it, and the one case where you'd revert — missing all the stars —
+shouldn't need a human to notice and flip something.
+
+So it is a **budget plan declared in `config.json` and tracked live**:
+
+```json
+"strategy": { "starSlots": 3, "starBudget": 140, "starTier": 2, "marketBias": 1.84 }
+```
+
+- Two pots on the board, star money and everyone else, rebalancing as you buy.
+  When the stars are bought or gone the reserve rolls into the scrub pool by
+  itself — the "fallback to value mode" with no switch to forget.
+- **Three prices always visible** rather than one behind a mode: what he's
+  WORTH (book × inflation, the old board), what he'll LIKELY COST (× marketBias),
+  and YOUR MAX (what the plan affords). The old board showed only the first,
+  which is exactly why it lost every contested player.
+- **Star pricing reserves the market cost of your *other* stars**, not a flat
+  share. $140 ÷ 3 = $46 each loses all three when stars clear at $65.
+- **Plan viability**, live: "stars are going for about $68. $140 buys 2, not 3 —
+  raise starBudget by ~$65 or drop starSlots to 2." Caught in the Sep 3 mock
+  with McCaffrey at $66 against a $46 allowance.
+- **Consequence line**: "at $67 you'd have $133 for 14 more slots — $9.5 each."
+- `starBudget: 0` reproduces the old flat-value behaviour exactly.
+
+Still open: `marketBias` is a single number from one league's draft. It should
+be re-measured per league, and ideally learned live from the current draft
+rather than carried over.
+
+<details><summary>Original write-up</summary>
 
 **The gap:** the sheet encodes one strategy — flat value — and the board inherits
 it. It executed well, but it structurally cannot recommend paying up for elite
@@ -77,6 +113,8 @@ That was a real choice, made by the tool rather than by the drafter.
 
 Worth showing the implied consequence live: "spending $70 here leaves $9.3/slot
 for 14 spots."
+
+</details>
 
 ## 3. Formalize the live advisor
 

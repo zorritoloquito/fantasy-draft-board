@@ -241,3 +241,98 @@ doesn't spam the terminal) and written into `live.json` as a `stale` reason, so
 the board surfaces it too. `Runtime.evaluate` now also rejects on page
 exceptions and after a 5s timeout instead of hanging forever. Startup failures
 print a plain-English cause and remedy rather than a stack trace.
+
+---
+
+# Found in a live mock draft — Sep 3, 2026
+
+Three rounds of a Yahoo mock, driven deliberately: position filters on and off,
+tab switches, re-sorts, scrolling, and a filter left on while players sold.
+
+## What held up
+
+- **`posFilter` is directly readable.** `extract.js` reads Yahoo's own filter
+  state off a `<select>`. The live room reports `pos=TE`; an earlier probe saw
+  `pos_type=All`. Both forms are handled, and this is now the primary signal for
+  P0-1 with the shape/rate heuristics as fallback.
+- **The resync path prevented the deadlock.** Filters and scrolls produced
+  disappearances of 27, 142 and 90 players in a single tick. Each one re-synced,
+  and normal sale detection resumed immediately afterwards. Under the
+  refuse-only version this would have frozen the board for the rest of the draft.
+- **No phantom inflation.** `filled` and `soldIds` stayed exactly equal the whole
+  session; `phantoms` never left 0.
+- Team, budget, roster, nomination and bid parsing were all correct throughout.
+
+## P1-4 — Sale prices were scraped from the wrong place (FIXED)
+
+Yahoo does **not** print the sale price in the "Last:" banner. The live DOM is:
+
+```
+Last:
+K. MONANGAI
+(RB · CHI)
+Team 9
+J. Cook III      <- the NEXT nomination starts here
+RB
+Buf
+Bye 7
+Proj $52
+$56
+Team 3
+Offer $57
+Max Offer $186
+Budget $200
+```
+
+The first `$N` after "Last:" therefore belongs to the *next* player. Taking it
+recorded **CeeDee Lamb at $186** — Yahoo's Max Offer field. Four of eight prices
+in the first half of the mock were wrong this way.
+
+**Fixed** by deriving the price instead of scraping it: when a player sells, the
+winning team's budget drops by exactly the sale price. If precisely one team's
+budget fell this tick, that's the buyer and that's the price. Exact, needs no
+regex, and cross-checks the banner's own attribution for free.
+
+Measured over the same session: 4 of 8 wrong before, 5 of 7 correct after (the
+two misses were the phantom sales below, which had no price because nothing
+was bought).
+
+## P1-5 — Disappearance was still enough to record a sale (FIXED)
+
+Immediately after a resync adopted a fresh baseline mid-scroll, two players left
+the rendered list and the watcher logged:
+
+```
+SOLD ▸ Aaron Rodgers
+SOLD ▸ Cooper Kupp
+```
+
+Neither had been nominated. Both had a null buyer *and* a null price, because no
+team's budget had moved — the tell that nothing had been sold. The `filled`
+ceiling stopped this from corrupting inflation, but the phantoms still entered
+`soldOrder`, where `reconcileGone` ranks observed sales ahead of self-calibrated
+ones.
+
+**Fixed.** Yahoo's `filled` count is the authority on whether anyone was bought:
+a tick may record at most `filled - lastFilled` sales, and zero if `filled`
+didn't move. `salesAllowed()` in `src/model.mjs`, covered by tests.
+
+## P0-5 — A stale tick blanked the board instead of freezing it (FIXED)
+
+A `refuse`/`resync` write carried only `{stale, reason, teams, filled, spent}`,
+so the board lost `me`, `nominated` and `block` and rendered "watcher not
+running" — the same thing it shows when the watcher is genuinely dead. Those are
+very different situations.
+
+**Fixed.** The watcher keeps the last fully-trusted payload and replays it on a
+stale write, so the board shows the last good numbers clearly labelled frozen.
+
+## Still open
+
+- **`extract.js` returns junk rows.** One parsed entry was `{"name":"CEL",
+  "pos":"RB","team":"GB"}`. Harmless — `matchPlayer` returns null and it's
+  ignored — but the avail regex is looser than it should be.
+- **K/DEF still absent from the sheet** (P3-2), so those picks can't be valued.
+- The mock used generic "Team N" names, so the custom-team-name path (P0-3) was
+  *not* re-exercised live. It was fixed and verified against the 2026 draft, but
+  it remains the piece with the least live evidence behind it.

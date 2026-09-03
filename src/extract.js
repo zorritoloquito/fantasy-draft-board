@@ -26,16 +26,16 @@
   // --- everything below is ADDITIVE and best-effort. It must never throw and
   // must never change the fields above; the watcher works without any of it. ---
 
-  // Sale price off the "Last:" banner (KNOWN-ISSUES P1-3 — no price was ever
-  // recorded, so the 2026 draft can't be replayed). The banner's exact shape
-  // isn't pinned down, so take the first $N in the ~120 chars after "Last:".
-  try {
-    const i = t.indexOf('Last:');
-    if (i >= 0 && out.last) {
-      const m = t.slice(i, i + 120).match(/\$(\d+)/);
-      if (m) out.last.price = +m[1];
-    }
-  } catch (e) {}
+  // NOTE ON SALE PRICES (KNOWN-ISSUES P1-3): Yahoo does NOT put the price in
+  // the "Last:" banner. Verified against a live draft room on Sep 3 — the
+  // banner is only:
+  //     Last:\nK. MONANGAI\n(RB · CHI)\nTeam 9
+  // and the very next lines belong to the NEXT nomination (Proj $52, $56,
+  // Offer $57, Max Offer $186 ...). An earlier version grabbed the first $N
+  // after "Last:" and consequently recorded CeeDee Lamb as selling for $186.
+  //
+  // The price is instead derived in watch.mjs from the winning team's budget
+  // dropping. That is exact, and it cross-checks the buyer for free.
 
   // Best-effort read of the position filter. The watcher does NOT depend on
   // this — it independently refuses to diff when the list holds fewer than 3

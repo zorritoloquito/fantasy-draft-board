@@ -99,6 +99,26 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
 .sc .bar i{display:block;height:100%}
 .sc .cliffnote{font:700 9.5px/1.4 var(--mono);margin-top:4px}
 
+/* ---- budget plan ---- */
+.plan{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.pot{background:var(--panel);border:1px solid var(--line);border-left-width:3px;border-radius:6px;padding:7px 9px}
+.pot .lbl{font:600 9px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.pot .big{font:700 17px/1.15 var(--mono)}
+.pot .sub{font:10px/1.4 var(--mono);color:var(--dimmer)}
+.pot.dead{opacity:.45}
+.prices{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0 4px}
+.pr{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:6px 8px;text-align:center}
+.pr .k{font:600 8.5px/1.4 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--dimmer)}
+.pr .v{font:700 18px/1.2 var(--mono)}
+.pr.hi{border-color:#1f6feb;background:#1f6feb1f}
+.consq{font:11px/1.5 var(--mono);color:var(--dim);margin-top:6px;padding-top:6px;border-top:1px solid var(--line)}
+.consq b{color:var(--fg)}
+.consq.bad{color:var(--hot)}
+.viab{grid-column:1/-1;font:11px/1.5 var(--mono);border-radius:5px;padding:6px 9px}
+.viab.ok{background:#3fb95015;color:var(--cool);border:1px solid #3fb95040}
+.viab.bad{background:#d2992218;color:#ffd98a;border:1px solid #d2992255}
+.viab b{color:#fff}
+
 /* ---- tier-break badges ---- */
 .badge{display:inline-block;font:700 8.5px/1.5 var(--mono);border-radius:3px;
   padding:0 4px;margin-left:5px;vertical-align:1px}
@@ -129,9 +149,11 @@ kbd{font:10px/1 var(--mono);background:var(--panel2);border:1px solid var(--line
     <div id="left"></div>
   </div>
   <div class="col">
-    <h2>On the block <span id="bankroll"></span></h2>
+    <h2>Budget plan <span id="planhdr"></span></h2>
+    <div class="plan" id="plan"></div>
+    <h2 style="margin-top:14px">On the block <span id="bankroll"></span></h2>
     <div id="block"></div>
-    <h2 style="margin-top:14px">Max price to pay <span>— your value, adjusted for live inflation</span></h2>
+    <h2 style="margin-top:14px">Max price to pay <span>— worth vs likely cost vs what your plan allows</span></h2>
     <div id="wait"></div>
     <h2 style="margin-top:14px">Positional scarcity <span>— what's left, and where the cliff is</span></h2>
     <div class="scar" id="scarcity"></div>
@@ -295,12 +317,13 @@ function rowHTML(p, i, selected) {
     <div class="rt">$${p.value}<small>${p.vor} vor</small></div>
   </div>`;
 }
-let LIVEPS = new Map();
+let LIVEPS = new Map(), PLAN = null, STRAT = {}, STARPOOL = [], VIAB = {};
 function render() {
   recompute();
   LIVEPS = decide().ps;
   SCAR = tierScarcity(DATA.players, id => !!state.taken[id]);
   renderAlert();
+  STRAT = CFG.strategy ?? {};
   el('left').innerHTML = results.map((p, i) => rowHTML(p, i, i === sel)).join('') || '<div class=hint>no match</div>';
   el('leftTitle').innerHTML = search.value.trim()
     ? 'Search <span>— Enter marks taken, ⇧Enter marks yours</span>'
@@ -312,6 +335,48 @@ function render() {
   const infl = L?.inflation ?? 1;
   const adj  = v => Math.max(Math.round((v || 0) * infl), 1);
 
+  // --- BUDGET PLAN ---
+  // Roster context: live when the watcher is up, otherwise from what we've
+  // marked by hand, so the plan still works in a hand-driven draft.
+  const myRoster = mine();
+  const roster = L?.me
+    ? { budget: L.me.budget, filled: L.me.filled, slots: L.me.slots }
+    : { budget: CFG.budget, filled: myRoster.length, slots: CFG.rosterSlots };
+  const starsBought = myRoster.filter(p => isStarCandidate(p, STRAT)).length;
+  PLAN = planState({ ...roster, strategy: STRAT, myStarsBought: starsBought });
+
+  // Market estimates for the best remaining star candidates, best first. These
+  // drive both the viability check and what we can pay for any one of them.
+  STARPOOL = byVal(avail().filter(p => isStarCandidate(p, STRAT)))
+    .slice(0, 8)
+    .map(p => ({ p, est: priceView(p, { inflation: infl, strategy: STRAT }).marketEst }));
+  VIAB = planViability({ plan: PLAN, starPrices: STARPOOL.map(x => x.est) });
+
+  el('planhdr').innerHTML = STRAT.starBudget
+    ? `<span style="color:var(--dimmer)">— ${STRAT.starSlots} stars / $${STRAT.starBudget}, rest of the roster on $${CFG.budget - STRAT.starBudget}</span>`
+    : '<span style="color:var(--dimmer)">— flat value (no star budget set)</span>';
+
+  el('plan').innerHTML = `
+    <div class="pot ${PLAN.planActive ? '' : 'dead'}" style="border-left-color:var(--warm)">
+      <div class="lbl">star money</div>
+      <div class="big" style="color:var(--${PLAN.planActive ? 'warm' : 'dimmer'})">$${PLAN.starPot}</div>
+      <div class="sub">${PLAN.planActive
+        ? `${PLAN.starsLeft} to buy · up to <b style="color:var(--fg)">$${PLAN.perStar}</b> each`
+        : (starsBought >= (STRAT.starSlots ?? 0) && STRAT.starBudget
+            ? `plan complete — ${starsBought} bought` : 'rolled into the rest')}</div>
+    </div>
+    <div class="pot" style="border-left-color:var(--cool)">
+      <div class="lbl">everyone else</div>
+      <div class="big" style="color:var(--cool)">$${PLAN.scrubPot}</div>
+      <div class="sub">${PLAN.scrubSlotsLeft} slots · <b style="color:var(--fg)">$${PLAN.perScrub.toFixed(1)}</b>/slot</div>
+    </div>`
+    + (PLAN.planActive && VIAB.typical ? `<div class="viab ${VIAB.ok ? 'ok' : 'bad'}">
+        ${VIAB.ok
+          ? `✓ plan holds — stars are going for about <b>$${VIAB.typical}</b>, and $${PLAN.starPot} covers the ${VIAB.need} you still want.`
+          : `⚠ stars are going for about <b>$${VIAB.typical}</b>. $${PLAN.starPot} buys <b>${VIAB.afford}</b>, not ${VIAB.need} —
+             raise starBudget by ~$${VIAB.shortfall} or drop starSlots to ${VIAB.afford}.`}
+      </div>` : '');
+
   el('gap').textContent = L && !L.stale ? `infl ${infl.toFixed(2)}` : (L ? 'STALE' : 'offline');
   el('lg').textContent = `${CFG.teams}×$${CFG.budget}`;
   el('lg').style.color = 'var(--dimmer)';
@@ -320,20 +385,37 @@ function render() {
     : '<span style="color:var(--dimmer)">watcher not running</span>';
 
   // --- ON THE BLOCK ---
+  // Three numbers, always visible. The old board showed only the first, which
+  // is what he is WORTH; on its own it loses every contested player. The
+  // second is what he will probably COST (measured bias, see
+  // docs/MARKET-2026-OZARK.md). The third is what your plan can actually AFFORD.
   const nom = L?.nominated, blk = L?.block;
   if (nom && blk) {
-    const target = adj(nom.value);
-    const over   = blk.bid - target;
-    const verdict = blk.bid >= target ? 'STOP' : (blk.nextOffer <= target ? 'BID' : 'STOP');
+    const pv  = priceView(nom, { inflation: infl, strategy: STRAT, plan: PLAN,
+      otherStarPrices: STARPOOL.filter(x => x.p.id !== nom.id).map(x => x.est) });
+    const cap = pv.planMax;
+    const verdict = blk.bid >= cap ? 'STOP' : (blk.nextOffer <= cap ? 'BID' : 'STOP');
     const vcol    = verdict === 'BID' ? 'cool' : 'hot';
+    const after   = afterSpending(Math.max(blk.nextOffer, blk.bid), roster);
+    const laneTxt = pv.lane === 'star'
+      ? `<span style="color:var(--warm)">★ star budget</span>`
+      : `<span style="color:var(--dimmer)">value lane</span>`;
     el('block').innerHTML = `<div class="wc" style="border-left-color:var(--${nom.pos.toLowerCase()});border-left-width:5px">
-      <div class="top"><span class="pos pos-${nom.pos}">${nom.pos} · ${nom.name}</span>
+      <div class="top"><span class="pos pos-${nom.pos}">${nom.pos} · ${nom.name} <span style="font-weight:400;color:var(--dimmer)">T${nom.tier}</span> ${laneTxt}</span>
         <span class="cost" style="color:var(--${vcol})">${verdict}</span></div>
       <div class="who" style="font:600 20px/1.3 var(--mono);margin:6px 0">
-        bid $${blk.bid} <span style="color:var(--dimmer);font-size:13px">vs your target $${target}</span></div>
-      <div class="exp">sheet $${nom.value} × ${infl.toFixed(2)} inflation = <b style="color:var(--fg)">$${target}</b>
-        · ${over >= 0 ? `<span style="color:var(--hot)">$${over} over book</span>` : `<span style="color:var(--cool)">$${-over} under book</span>`}
-        · leader ${blk.leader}</div>
+        bid $${blk.bid} <span style="color:var(--dimmer);font-size:13px">· leader ${blk.leader}</span></div>
+      <div class="prices">
+        <div class="pr"><div class="k">worth</div><div class="v" style="color:var(--dim)">$${pv.valueTarget}</div></div>
+        <div class="pr"><div class="k">likely cost</div><div class="v" style="color:var(--warm)">$${pv.marketEst}</div></div>
+        <div class="pr hi"><div class="k">your max</div><div class="v" style="color:var(--${vcol})">$${cap}</div></div>
+      </div>
+      <div class="consq${after.affordable ? '' : ' bad'}">
+        ${after.affordable
+          ? `at $${Math.max(blk.nextOffer, blk.bid)} you'd have <b>$${after.left}</b> for <b>${after.remaining}</b> more slots — $${after.perSlot.toFixed(1)} each`
+          : `⚠ $${Math.max(blk.nextOffer, blk.bid)} leaves you unable to fill ${after.remaining} slots`}
+      </div>
+      <div class="exp">sheet $${pv.book} × ${infl.toFixed(2)} inflation = $${pv.valueTarget} · the 2026 room paid ${(STRAT.marketBias ?? 1).toFixed(2)}× that</div>
     </div>`;
   } else {
     el('block').innerHTML = '<div class="slot empty">nothing nominated</div>';
@@ -344,9 +426,14 @@ function render() {
   const bargains = pool.slice(0, 60)
     .map(p => ({ p, target: adj(p.value), edge: (p.value || 0) - adj(p.value) }))
     .sort((x, y) => y.p.value - x.p.value).slice(0, 8);
-  el('wait').innerHTML = bargains.map(({p, target}) => `
-    <div class="slot"><span class="pos-${p.pos}">${p.pos} ${p.name}</span>
-      <span>book $${p.value} → pay ≤ <b style="color:var(--cool)">$${target}</b></span></div>`).join('');
+  el('wait').innerHTML = bargains.map(({p}) => {
+    const pv = priceView(p, { inflation: infl, strategy: STRAT, plan: PLAN,
+      otherStarPrices: STARPOOL.filter(x => x.p.id !== p.id).map(x => x.est) });
+    const star = pv.lane === 'star';
+    return `<div class="slot"><span class="pos-${p.pos}">${star ? '★ ' : ''}${p.pos} ${p.name}</span>
+      <span><span style="color:var(--dimmer)">worth $${pv.valueTarget} · likely $${pv.marketEst} →</span>
+        pay ≤ <b style="color:var(--${star ? 'warm' : 'cool'})">$${pv.planMax}</b></span></div>`;
+  }).join('');
 
   // --- POSITIONAL SCARCITY ---
   el('scarcity').innerHTML = POSN.map(pos => {
