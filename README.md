@@ -13,6 +13,9 @@ see [`docs/DEBRIEF-2026.md`](docs/DEBRIEF-2026.md).
 > tests — see [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) for what changed and
 > what is still fragile, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's next.
 
+**Picking this up cold?** Read [`docs/STATE.md`](docs/STATE.md) — where things
+stand, what's verified live, what isn't, and what to do next.
+
 ## Before every draft
 
 Three things, in this order. Skipping the first is how you end up drafting
